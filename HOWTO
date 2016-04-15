@@ -1,0 +1,56 @@
+Follow the instructions to setup the API Tracker for your library:
+
+1) Please look at the README of the Java API Tracker and API Monitor tools:
+  
+  https://github.com/lvc/japi-tracker
+  https://github.com/lvc/japi-monitor
+
+2) You need to install basic packages to the system:
+  
+  Perl 5
+  cURL
+
+3) You need to install these tools to the system:
+
+  japi-tracker
+  japi-monitor
+  japi-compliance-checker
+  pkgdiff
+  
+You can use the installer for that: https://github.com/lvc/installer-4j/releases
+
+Just extract the package of installer and execute:
+  
+  sudo make install prefix=/usr target=japi-tracker
+
+All packages will be downloaded from the github.com/lvc and installed to the "/usr" directory.
+
+To uninstall:
+  
+  sudo make uninstall prefix=/usr target=japi-tracker
+
+4) Create initial profile for your library (PROFILE.json):
+
+{
+  "Name":       "SHORT LIBRARY NAME",
+  "SourceUrl":  "URL TO DOWNLOAD PACKAGES"
+}
+ 
+5) Download and extract latest packages of your library:
+
+  japi-monitor -get PROFILE.json
+  japi-monitor -build --limit=10 PROFILE.json
+
+6) Create analysis reports:
+  
+  japi-tracker -build PROFILE.json
+
+7) Rebuild some reports if needed:
+
+  japi-tracker -rebuild -target apireport -v X.Y.Z PROFILE.json
+
+8) The home page of the report will be generated to:
+
+  timeline/<LIBRARY NAME>/index.html
+
+Enjoy!
