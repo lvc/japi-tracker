@@ -366,6 +366,16 @@ sub skipVersion($)
             }
         }
     }
+    elsif(defined $Profile->{"SkipOdd"})
+    {
+        if($V=~/\A\d+\.(\d+)/)
+        {
+            if($1 % 2 == 1)
+            {
+                return 1;
+            }
+        }
+    }
     
     return 0;
 }
@@ -382,15 +392,27 @@ sub buildData()
         }
     }
     
-    my $V_Pre = undef;
+    my $ChangedAnnotations = undef;
     foreach my $V (reverse(@Versions))
     {
-        if(defined $V_Pre
-        and $Profile->{"Versions"}{$V}{"AddedAnnotations"}) {
-            $Profile->{"Versions"}{$V_Pre}{"LastWithoutAnnotations"} = 1;
+        if($Profile->{"Versions"}{$V}{"AddedAnnotations"})
+        {
+            $ChangedAnnotations = $V;
+            last;
         }
-        
-        $V_Pre = $V;
+    }
+    
+    if($ChangedAnnotations)
+    {
+        foreach my $V (reverse(@Versions))
+        {
+            if($V eq $ChangedAnnotations) {
+                last;
+            }
+            else {
+                $Profile->{"Versions"}{$V}{"WithoutAnnotations"} = 1;
+            }
+        }
     }
     
     foreach my $V (@Versions)
@@ -501,6 +523,10 @@ sub buildData()
         }
     }
     
+    if(my $SnapshotUpdateTime = getSnapshotUpdateTime()) {
+        $DB->{"SnapshotUpdateTime"} = $SnapshotUpdateTime;
+    }
+    
     if(defined $TargetElement
     and $TargetElement eq "graph")
     {
@@ -541,7 +567,7 @@ sub buildData()
             if(skipArchive($Dump->{"Archive"})) {
                 next;
             }
-            # $Total += $Dump->{"TotalSymbols"};
+            
             $Total += countSymbolsF($Dump, $First);
         }
         $Scatter->{$First} = 0;
@@ -610,7 +636,7 @@ sub simpleGraph($$$)
             }
         }
         
-        # $V_S=~s/\-rc.*//g;
+        $V_S=~s/\-(alpha|beta|rc)\d*\Z//g;
         
         $Content .= $_."  ".$Val;
         
@@ -785,8 +811,38 @@ sub updateRequired($)
             }
         }
     }
+    else
+    {
+        if(defined $Profile->{"SnapshotVer"}
+        and $V eq $Profile->{"SnapshotVer"})
+        {
+            if(defined $DB->{"SnapshotUpdateTime"})
+            {
+                if(my $UTime = getSnapshotUpdateTime())
+                {
+                    if($DB->{"SnapshotUpdateTime"} ne $UTime)
+                    {
+                        return 1;
+                    }
+                }
+            }
+            else
+            {
+                return 1;
+            }
+        }
+    }
     
     return 0;
+}
+
+sub getSnapshotUpdateTime()
+{
+    if(my $SnapshotVer = $Profile->{"SnapshotVer"}) {
+        return getTimeF($Profile->{"Versions"}{$SnapshotVer}{"Source"});
+    }
+    
+    return undef;
 }
 
 sub createChangelog($$)
@@ -1042,10 +1098,8 @@ sub getScmUpdateTime()
             }
         }
         
-        if($Head)
-        {
-            $Time = `stat -c \%Y \"$Head\"`;
-            chomp($Time);
+        if($Head) {
+            $Time = getTimeF($Head);
         }
         
         if($Time) {
@@ -1054,6 +1108,16 @@ sub getScmUpdateTime()
     }
     
     return undef;
+}
+
+sub getTimeF($)
+{
+    my $Path = $_[0];
+    
+    my $Time = `stat -c \%Y \"$Path\"`;
+    chomp($Time);
+    
+    return $Time;
 }
 
 sub checkTarget($)
@@ -1260,7 +1324,7 @@ sub createAPIDump($)
             my $Dump = eval(readFile($APIDump));
             $DB->{"APIDump"}{$V}{$Md5}{"Lang"} = $Dump->{"Language"};
             
-            my $TotalSymbols = countSymbolsP($Dump);
+            my $TotalSymbols = countSymbols($Dump);
             $DB->{"APIDump"}{$V}{$Md5}{"TotalSymbols"} = $TotalSymbols;
             
             my @Meta = ();
@@ -1294,7 +1358,7 @@ sub countSymbolsF($$)
     my $AccOpts = getJAPICC_Options($V);
     
     if($AccOpts=~/list|skip/
-    and not $Profile->{"Versions"}{$V}{"LastWithoutAnnotations"})
+    and not $Profile->{"Versions"}{$V}{"WithoutAnnotations"})
     {
         my $Path = $Dump->{"Path"};
         printMsg("INFO", "Counting symbols in the API dump for \'".getFilename($Dump->{"Archive"})."\'");
@@ -1309,13 +1373,6 @@ sub countSymbolsF($$)
 }
 
 sub countSymbols($)
-{
-    my $Path = $_[0];
-    my $Dump = eval(readFile($Path));
-    return countSymbolsP($Dump);
-}
-
-sub countSymbolsP($)
 {
     my $Dump = $_[0];
     
@@ -1345,30 +1402,33 @@ sub getArchiveName($$)
     my $Name = getFilename($Ar);
     my $Dir = getDirname($Ar);
     
+    $Name=~s/\.jar\Z//g;
+    
+    if(my $Suffix = $Profile->{"ArchiveSuffix"}) {
+        $Name=~s/\Q$Suffix\E\Z//g;
+    }
+    
+    if($T=~/Shortest/)
+    { # httpcore5-5.0-alpha1.jar
+        $Name=~s/\A([a-z]{3,})\d+(\-)/$1$2/ig;
+    }
+    
     if($T=~/Short/)
     {
-        $Name=~s/\.jar\Z//g;
-        
-        if(my $Suffix = $Profile->{"ArchiveSuffix"}) {
-            $Name=~s/\Q$Suffix\E\Z//g;
-        }
-        
-        if(not $Name=~s/\A(.+?)[\-\_][v\d\.\-\_]+(|[\-\.](final|release))\Z/$1/ig)
+        if(not $Name=~s/\A(.+?)[\-\_][v\d\.\-\_]+(|[\-\_\.](final|release|snapshot|RC\d*|beta\d*|alpha\d*))\Z/$1/ig)
         { # NAME-X.Y.Z-SUBJ.jar
             $Name=~s/\A(.+?)\-[\d\.]+\-(.+?)/$1-$2/ig;
         }
-        
-        if($T=~/Dir/)
-        {
-            if($Dir) {
-                $Name = $Dir."/".$Name;
-            }
-        }
-        
-        return $Name;
     }
     
-    return undef;
+    if($T=~/Dir/)
+    {
+        if($Dir) {
+            $Name = $Dir."/".$Name;
+        }
+    }
+    
+    return $Name;
 }
 
 sub createAPIReport($$)
@@ -1462,6 +1522,7 @@ sub createAPIReport($$)
     
     my %ShortName2 = ();
     my %ShortNameDir2 = ();
+    my %ShortestName2 = ();
     
     foreach my $Archive2 (@Archives2)
     {
@@ -1470,6 +1531,9 @@ sub createAPIReport($$)
         }
         if(my $Short = getArchiveName($Archive2, "Short")) {
             $ShortName2{$Short}{$Archive2} = 1;
+        }
+        if(my $Shortest = getArchiveName($Archive2, "Shortest")) {
+            $ShortestName2{$Shortest}{$Archive2} = 1;
         }
     }
     
@@ -1528,6 +1592,23 @@ sub createAPIReport($$)
                 {
                     $Archive2 = $Pair[0];
                     delete($ShortName2{$Short});
+                }
+            }
+        }
+        
+        # Try to match by shortest name
+        if(not $Archive2)
+        {
+            my $Short = getArchiveName($Archive1, "Shortest");
+            
+            if(defined $ShortestName2{$Short})
+            {
+                my @Pair = keys(%{$ShortestName2{$Short}});
+                
+                if($#Pair==0)
+                {
+                    $Archive2 = $Pair[0];
+                    delete($ShortestName2{$Short});
                 }
             }
         }
@@ -1911,16 +1992,12 @@ sub createAPIReport($$)
     foreach my $Ar (keys(%Added))
     {
         my $Dump = $DB->{"APIDump"}{$V2}{getMd5($Ar)};
-        
-        # $AddedByArchives_T += $Dump->{"TotalSymbols"};
         $AddedByArchives_T += countSymbolsF($Dump, $V2);
     }
     
     foreach my $Ar (keys(%Removed))
     {
         my $Dump = $DB->{"APIDump"}{$V1}{getMd5($Ar)};
-        
-        # $RemovedByArchives_T += $Dump->{"TotalSymbols"};
         $RemovedByArchives_T += countSymbolsF($Dump, $V1);
     }
     
@@ -1928,10 +2005,8 @@ sub createAPIReport($$)
     if($TotalFuncs) {
         $BC -= $Affected_T/$TotalFuncs;
     }
-    if(my $Rm = keys(%Removed) and $#Archives1>=0)
-    {
+    if(my $Rm = keys(%Removed) and $#Archives1>=0) {
         $BC *= (1-$RemovedByArchives_T/($TotalFuncs+$RemovedByArchives_T));
-        # $BC *= (1-$Rm/($#Archives1+1));
     }
     $BC = formatNum($BC);
     
@@ -1939,10 +2014,8 @@ sub createAPIReport($$)
     if($TotalFuncs) {
         $BC_Source -= $Affected_T_Source/$TotalFuncs;
     }
-    if(my $Rm = keys(%Removed) and $#Archives1>=0)
-    {
+    if(my $Rm = keys(%Removed) and $#Archives1>=0) {
         $BC_Source *= (1-$RemovedByArchives_T/($TotalFuncs+$RemovedByArchives_T));
-        # $BC_Source *= (1-$Rm/($#Archives1+1));
     }
     $BC_Source = formatNum($BC_Source);
     
@@ -2087,6 +2160,32 @@ sub compareAPIs($$$$)
         $Cmd .= " -compact";
     }
     
+    if(my $Dep = $Profile->{"Dep"})
+    {
+        if($Dep ne $Module)
+        {
+            foreach my $M (keys(%{$DB->{"APIDump"}{$V1}}))
+            {
+                my $Attr = $DB->{"APIDump"}{$V1}{$M};
+                if(getArchiveName($Attr->{"Archive"}, "Short") eq $Dep)
+                {
+                    $Cmd .= " -dep1 ".$Attr->{"Path"};
+                    last;
+                }
+            }
+            
+            foreach my $M (keys(%{$DB->{"APIDump"}{$V2}}))
+            {
+                my $Attr = $DB->{"APIDump"}{$V2}{$M};
+                if(getArchiveName($Attr->{"Archive"}, "Short") eq $Dep)
+                {
+                    $Cmd .= " -dep2 ".$Attr->{"Path"};
+                    last;
+                }
+            }
+        }
+    }
+    
     $Cmd .= " -limit-affected 5";
     
     if($Debug) {
@@ -2212,7 +2311,7 @@ sub getJAPICC_Options($)
         $Opt .= " -skip-internal-types \"$SkipInternalTypes\"";
     }
     
-    if(not $Profile->{"Versions"}{$V}{"LastWithoutAnnotations"})
+    if(not $Profile->{"Versions"}{$V}{"WithoutAnnotations"})
     {
         if(my $AnnotationList = $Profile->{"AnnotationList"}) {
             $Opt .= " -annotations-list \"$AnnotationList\"";
@@ -2562,7 +2661,7 @@ sub createTimeline()
         
         $Content .= "<tr id='".$Anchor."'>";
         
-        $Content .= "<td>".$V."</td>\n";
+        $Content .= "<td title='".getFilename($Profile->{"Versions"}{$V}{"Source"})."'>".$V."</td>\n";
         $Content .= "<td>".showDate($V, $Date)."</td>\n";
         
         if($Changelog ne "Off")
@@ -2745,7 +2844,15 @@ sub createTimeline()
         
         $Content .= "Maintained by $M. ";
     }
-    $Content .= "Last updated on ".localtime($DB->{"Updated"}).".";
+    
+    my $Date = localtime($DB->{"Updated"});
+    $Date=~s/(\d\d:\d\d):\d\d/$1/;
+    
+    $Content .= "Last updated on ".$Date.".";
+    
+    $Content .= "<br/>";
+    $Content .= "<br/>";
+    $Content .= "Generated by <a href='https://github.com/lvc/japi-tracker'>Java API Tracker</a> and <a href='https://github.com/lvc/japi-compliance-checker'>JAPICC</a> tools.";
     
     if(-f $GraphPath)
     {
@@ -2799,10 +2906,11 @@ sub createGlobalIndex()
     
     $Content .= "<tr>\n";
     $Content .= "<th>Name</th>\n";
-    $Content .= "<th>API Timeline</th>\n";
+    $Content .= "<th>API Changes<br/>Review</th>\n";
     # $Content .= "<th>Maintainer</th>\n";
     $Content .= "</tr>\n";
     
+    my %LibAttr = ();
     foreach my $L (sort @Libs)
     {
         my $Title = $L;
@@ -2814,26 +2922,30 @@ sub createGlobalIndex()
             if(defined $Pr->{"Title"}) {
                 $Title = $Pr->{"Title"};
             }
-            
-            # $M = $Pr->{"Maintainer"};
-            # $MUrl = $Pr->{"MaintainerUrl"};
         }
         else
         {
             my $DB = eval(readFile("db/$L/$DB_NAME"));
+            
             if(defined $DB->{"Title"}) {
                 $Title = $DB->{"Title"};
             }
-            
-            # $M = $DB->{"Maintainer"};
-            # $MUrl = $DB->{"MaintainerUrl"};
         }
         
-        $Content .= "<tr>\n";
-        $Content .= "<td class='sl'>$Title</td>\n";
-        $Content .= "<td><a href='timeline/$L/index.html'>timeline</a></td>\n";
+        $LibAttr{$L}{"Title"} = $Title;
         
-        # if($MUrl) {
+        # $LibAttr{$L}{"Maintainer"} = $M;
+        # $LibAttr{$L}{"MaintainerUrl"} = $MUrl;
+    }
+    
+    foreach my $L (sort {lc($LibAttr{$a}{"Title"}) cmp lc($LibAttr{$b}{"Title"})} @Libs)
+    {
+        $Content .= "<tr>\n";
+        $Content .= "<td class='sl'>".$LibAttr{$L}{"Title"}."</td>\n";
+        $Content .= "<td><a href='timeline/$L/index.html'>review</a></td>\n";
+        
+        # my $M = $LibAttr{$L}{"Maintainer"};
+        # if(my $MUrl = $LibAttr{$L}{"MaintainerUrl"}) {
         #     $M = "<a href='".$MUrl."'>$M</a>";
         # }
         # $Content .= "<td>$M</td>\n";
@@ -2945,7 +3057,7 @@ sub checkFiles()
             
             # support for old data
             # my $Dump = $DB->{"APIDump"}{$V}{$Md5};
-            # $Dump->{"TotalSymbols"} = countSymbols($Dump->{"Path"});
+            # $Dump->{"TotalSymbols"} = countSymbols($Dump);
         }
     }
     
@@ -3157,6 +3269,10 @@ sub scenario()
     {
         printMsg("INFO", $HelpMessage);
         exit(0);
+    }
+    
+    if(-d "objects_report") {
+        exitStatus("Error", "Can't execute inside the ABI tracker home directory");
     }
     
     loadModule("Basic");
