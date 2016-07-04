@@ -12,8 +12,8 @@ INSTALL:
 
 REQUIRES:
   Perl 5
-  Java API Compliance Checker (1.7 or newer)
-  Java API Monitor (1.0 or newer)
+  Java API Compliance Checker (1.8 or newer)
+  Java API Monitor (1.1 or newer)
   PkgDiff (1.6.4 or newer)
 
 USAGE:

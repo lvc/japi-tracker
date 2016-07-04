@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 ##################################################################
-# Java API Tracker 1.0
+# Java API Tracker 1.1
 # A tool to visualize API changes timeline of a Java library
 #
 # Copyright (C) 2015-2016 Andrey Ponomarenko's ABI Laboratory
@@ -14,8 +14,8 @@
 # REQUIREMENTS
 # ============
 #  Perl 5 (5.8 or newer)
-#  Java API Compliance Checker (1.7 or newer)
-#  Java API Monitor (1.0 or newer)
+#  Java API Compliance Checker (1.8 or newer)
+#  Java API Monitor (1.1 or newer)
 #  PkgDiff (1.6.4 or newer)
 #
 # This program is free software: you can redistribute it and/or modify
@@ -40,7 +40,7 @@ use Cwd qw(abs_path cwd);
 use Data::Dumper;
 use Digest::MD5 qw(md5_hex);
 
-my $TOOL_VERSION = "1.0";
+my $TOOL_VERSION = "1.1";
 my $DB_NAME = "Tracker.data";
 my $TMP_DIR = tempdir(CLEANUP=>1);
 
@@ -49,7 +49,7 @@ my $MODULES_DIR = get_Modules();
 push(@INC, dirname($MODULES_DIR));
 
 my $JAPICC = "japi-compliance-checker";
-my $JAPICC_VERSION = "1.7";
+my $JAPICC_VERSION = "1.8";
 
 my $PKGDIFF = "pkgdiff";
 my $PKGDIFF_VERSION = "1.6.4";
