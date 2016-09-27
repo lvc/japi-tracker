@@ -743,7 +743,8 @@ sub matchFile($$)
                         return 1;
                     }
                 }
-                elsif($Tag eq "SkipArchives")
+                elsif($Tag eq "SkipArchives"
+                or $Tag eq "CheckArchives")
                 { # short name
                     if($L eq getArchiveName($Name, "Short")) {
                         return 1;
@@ -2040,6 +2041,9 @@ sub createAPIReport($$)
     push(@Meta, "\"Added\": ".$AddedSymbols_T);
     push(@Meta, "\"Removed\": ".$RemovedSymbols_T);
     push(@Meta, "\"TotalProblems\": ".$TotalProblems_T);
+    
+    push(@Meta, "\"Source_BC\": ".$BC_Source);
+    push(@Meta, "\"Source_TotalProblems\": ".$TotalProblems_T_Source);
     
     push(@Meta, "\"ArchivesAdded\": ".keys(%Added));
     push(@Meta, "\"ArchivesRemoved\": ".keys(%Removed));
