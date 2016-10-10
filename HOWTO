@@ -49,7 +49,12 @@ To uninstall:
 
   japi-tracker -rebuild -target apireport -v X.Y.Z PROFILE.json
 
-8) The home page of the report will be generated to:
+8) Cron job for daily monitoring and analysis:
+
+  japi-monitor -get -build-new PROFILE.json
+  japi-tracker -build PROFILE.json
+
+9) The home page of the report will be generated to:
 
   timeline/<LIBRARY NAME>/index.html
 

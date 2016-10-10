@@ -26,6 +26,10 @@ USAGE:
 EXAMPLES:
   japi-tracker -build slf4j.json
 
+CRON JOB:
+  japi-monitor -get -build-new [profile]
+  japi-tracker -build [profile]
+
 PROFILE FORMAT:
 
 {
