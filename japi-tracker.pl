@@ -1322,16 +1322,16 @@ sub createAPIDump($)
             $DB->{"APIDump"}{$V}{$Md5}{"Path"} = $APIDump;
             $DB->{"APIDump"}{$V}{$Md5}{"Archive"} = $RPath;
             
-            my $Dump = eval(readFile($APIDump));
-            $DB->{"APIDump"}{$V}{$Md5}{"Lang"} = $Dump->{"Language"};
+            my $API = eval(readFile($APIDump));
+            $DB->{"APIDump"}{$V}{$Md5}{"Lang"} = $API->{"Language"};
             
-            my $TotalSymbols = countSymbols($Dump);
+            my $TotalSymbols = countSymbols($DB->{"APIDump"}{$V}{$Md5});
             $DB->{"APIDump"}{$V}{$Md5}{"TotalSymbols"} = $TotalSymbols;
             
             my @Meta = ();
             
             push(@Meta, "\"Archive\": \"".$RPath."\"");
-            push(@Meta, "\"Lang\": \"".$Dump->{"Language"}."\"");
+            push(@Meta, "\"Lang\": \"".$API->{"Language"}."\"");
             push(@Meta, "\"TotalSymbols\": \"".$TotalSymbols."\"");
             push(@Meta, "\"PublicAPI\": \"1\"");
             
@@ -1358,13 +1358,19 @@ sub countSymbolsF($$)
     
     my $AccOpts = getJAPICC_Options($V);
     
-    if($AccOpts=~/list|skip/
+    if($AccOpts=~/list|skip|keep/
     and not $Profile->{"Versions"}{$V}{"WithoutAnnotations"})
     {
         my $Path = $Dump->{"Path"};
         printMsg("INFO", "Counting symbols in the API dump for \'".getFilename($Dump->{"Archive"})."\'");
         
-        my $Count = qx/$JAPICC -count-methods \"$Path\" $AccOpts/;
+        my $Cmd_C = "$JAPICC -count-methods \"$Path\" $AccOpts";
+        
+        if($Debug) {
+            printMsg("DEBUG", "executing $Cmd_C");
+        }
+        
+        my $Count = qx/$Cmd_C/;
         chomp($Count);
         
         return ($Dump->{"TotalSymbolsFiltered"} = $Count);
@@ -1373,7 +1379,7 @@ sub countSymbolsF($$)
     return ($Dump->{"TotalSymbolsFiltered"} = $Dump->{"TotalSymbols"});
 }
 
-sub countSymbols($)
+sub countSymbolsM($)
 {
     my $Dump = $_[0];
     
@@ -1392,6 +1398,25 @@ sub countSymbols($)
             $Total+=1;
         }
     }
+    
+    return "$Total";
+}
+
+sub countSymbols($)
+{
+    my $Dump = $_[0];
+    my $Path = $Dump->{"Path"};
+    
+    printMsg("INFO", "Counting methods in the API dump for \'".getFilename($Dump->{"Archive"})."\'");
+    
+    my $Cmd_C = "$JAPICC -count-methods \"$Path\"";
+    
+    if($Debug) {
+        printMsg("DEBUG", "executing $Cmd_C");
+    }
+    
+    my $Total = qx/$Cmd_C/;
+    chomp($Total);
     
     return $Total;
 }
@@ -2902,7 +2927,7 @@ sub createGlobalIndex()
     
     $Content .= getHead("global_index");
     
-    $Content .= "<h1>Maintained Java libraries</h1>\n";
+    $Content .= "<h1>Maintained Java libraries (".($#Libs+1).")</h1>\n";
     $Content .= "<br/>";
     $Content .= "<br/>";
     
@@ -3058,10 +3083,6 @@ sub checkFiles()
                 
                 $DB->{"APIDump"}{$V}{$Md5} = \%Info;
             }
-            
-            # support for old data
-            # my $Dump = $DB->{"APIDump"}{$V}{$Md5};
-            # $Dump->{"TotalSymbols"} = countSymbols($Dump);
         }
     }
     
@@ -3115,6 +3136,9 @@ sub checkFiles()
                 $Info{"Added"} = $Meta->{"Added"};
                 $Info{"Removed"} = $Meta->{"Removed"};
                 $Info{"TotalProblems"} = $Meta->{"TotalProblems"};
+                
+                $Info{"Source_BC"} = $Meta->{"Source_BC"};
+                $Info{"Source_TotalProblems"} = $Meta->{"Source_TotalProblems"};
                 
                 $Info{"ArchivesAdded"} = $Meta->{"ArchivesAdded"};
                 $Info{"ArchivesRemoved"} = $Meta->{"ArchivesRemoved"};
@@ -3292,7 +3316,7 @@ sub scenario()
         exitStatus("Module_Error", "cannot find \'$JAPICC\'");
     }
     
-    my @Reports = ("timeline", "package_diff", "changelog", "api_dump", "archives_report", "compat_report");
+    my @Reports = ("timeline", "package_diff", "changelog", "api_dump", "archives_report", "compat_report", "graph");
     
     if(my $Profile_Path = $ARGV[0])
     {

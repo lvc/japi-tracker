@@ -196,21 +196,6 @@ sub cmpVersions_S($$)
     return 0;
 }
 
-sub check_Cmd($)
-{
-    my $Cmd = $_[0];
-    return "" if(not $Cmd);
-    
-    foreach my $Path (sort {length($a)<=>length($b)} split(/:/, $ENV{"PATH"}))
-    {
-        if(-x $Path."/".$Cmd) {
-            return 1;
-        }
-    }
-    
-    return 0;
-}
-
 sub getMajor($)
 {
     my $V = $_[0];
