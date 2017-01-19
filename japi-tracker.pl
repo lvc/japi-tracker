@@ -3,7 +3,7 @@
 # Java API Tracker 1.1
 # A tool to visualize API changes timeline of a Java library
 #
-# Copyright (C) 2015-2016 Andrey Ponomarenko's ABI Laboratory
+# Copyright (C) 2015-2017 Andrey Ponomarenko's ABI Laboratory
 #
 # Written by Andrey Ponomarenko
 #
@@ -77,7 +77,7 @@ my $HomePage = "http://abi-laboratory.pro/";
 
 my $ShortUsage = "API Tracker $TOOL_VERSION
 A tool to visualize API changes timeline of a Java library
-Copyright (C) 2016 Andrey Ponomarenko's ABI Laboratory
+Copyright (C) 2017 Andrey Ponomarenko's ABI Laboratory
 License: GPLv2.0+ or LGPLv2.1+
 
 Usage: $CmdName [options] [profile]
@@ -657,8 +657,17 @@ sub simpleGraph($$$)
     
     my $Delta = $MaxRange - $MinRange;
     
-    $MinRange -= int($Delta*5/100);
-    $MaxRange += int($Delta*5/100);
+    if($Delta)
+    {
+        $MinRange -= int($Delta*5/100);
+        $MaxRange += int($Delta*5/100);
+    }
+    else
+    {
+        $MinRange -= 5;
+        $MaxRange += 5;
+    }
+    
     
     my $Data = $TMP_DIR."/graph.data";
     
