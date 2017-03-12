@@ -121,8 +121,8 @@ sub composeHTML_Head($$$$$)
     
     if($Styles)
     {
-        $CommonStyles = "<link rel=\"stylesheet\" type=\"text/css\" href=\"$TopDir/css/$CommonStyles\" />";
-        $Styles = "<link rel=\"stylesheet\" type=\"text/css\" href=\"$TopDir/css/$Styles\" />";
+        $CommonStyles = "<link rel=\"stylesheet\" type=\"text/css\" href=\"$TopDir/css/$CommonStyles?v=1.0\" />";
+        $Styles = "<link rel=\"stylesheet\" type=\"text/css\" href=\"$TopDir/css/$Styles?v=1.0\" />";
     }
     
     if($Scripts) {

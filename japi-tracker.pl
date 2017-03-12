@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 ##################################################################
-# Java API Tracker 1.1
+# Java API Tracker 1.2
 # A tool to visualize API changes timeline of a Java library
 #
 # Copyright (C) 2015-2017 Andrey Ponomarenko's ABI Laboratory
@@ -40,7 +40,7 @@ use Cwd qw(abs_path cwd);
 use Data::Dumper;
 use Digest::MD5 qw(md5_hex);
 
-my $TOOL_VERSION = "1.1";
+my $TOOL_VERSION = "1.2";
 my $DB_NAME = "Tracker.data";
 my $TMP_DIR = tempdir(CLEANUP=>1);
 
@@ -1490,7 +1490,7 @@ sub createAPIReport($$)
         $Cols-=2;
     }
     
-    if(not $Profile->{"ShowTotalProblems"}) {
+    if($Profile->{"ShowTotalProblems"} ne "On") {
         $Cols-=2;
     }
     
@@ -1739,25 +1739,25 @@ sub createAPIReport($$)
     }
     $Report .= "<th rowspan='2'>Added<br/>Methods</th>\n";
     $Report .= "<th rowspan='2'>Removed<br/>Methods</th>\n";
-    if($Profile->{"ShowTotalProblems"}) {
-        $Report .= "<th colspan='2'>Total Changes</th>\n";
+    if($Profile->{"ShowTotalProblems"} eq "On") {
+        $Report .= "<th colspan='2'>Total<br/>Changes</th>\n";
     }
     $Report .= "</tr>\n";
     
-    if($Profile->{"CompatRate"} ne "Off" or $Profile->{"ShowTotalProblems"})
+    if($Profile->{"CompatRate"} ne "Off" or $Profile->{"ShowTotalProblems"} eq "On")
     {
         $Report .= "<tr>";
         
         if($Profile->{"CompatRate"} ne "Off")
         {
-            $Report .= "<th title='Binary compatibility'>BC</th>\n";
-            $Report .= "<th title='Source compatibility'>SC</th>\n";
+            $Report .= "<th title='Binary compatibility' class='bc'>BC</th>\n";
+            $Report .= "<th title='Source compatibility' class='sc'>SC</th>\n";
         }
         
-        if($Profile->{"ShowTotalProblems"})
+        if($Profile->{"ShowTotalProblems"} eq "On")
         {
-            $Report .= "<th title='Binary compatibility'>BC</th>\n";
-            $Report .= "<th title='Source compatibility'>SC</th>\n";
+            $Report .= "<th title='Binary compatibility' class='bc'>BC</th>\n";
+            $Report .= "<th title='Source compatibility' class='sc'>SC</th>\n";
         }
         
         $Report .= "</tr>\n";
@@ -1876,6 +1876,9 @@ sub createAPIReport($$)
                         if(int($BC_D)>=90) {
                             $CClass = "warning";
                         }
+                        elsif(int($BC_D)>=80) {
+                            $CClass = "almost_compatible";
+                        }
                         else {
                             $CClass = "incompatible";
                         }
@@ -1900,6 +1903,9 @@ sub createAPIReport($$)
                     {
                         if(int($BC_D_Source)>=90) {
                             $CClass_Source = "warning";
+                        }
+                        elsif(int($BC_D_Source)>=80) {
+                            $CClass_Source = "almost_compatible";
                         }
                         else {
                             $CClass_Source = "incompatible";
@@ -1930,7 +1936,7 @@ sub createAPIReport($$)
                     $Report .= "<td class='ok'>0</td>\n";
                 }
                 
-                if($Profile->{"ShowTotalProblems"})
+                if($Profile->{"ShowTotalProblems"} eq "On")
                 {
                     if($TotalProblems) {
                         $Report .= "<td class=\'warning\'><a$LinkClass href='../../../../".$APIReport_D->{"Path"}."'>$TotalProblems</a></td>\n";
@@ -2278,12 +2284,12 @@ sub compareAPIs($$$$)
     my ($Affected_Source) = ();
     my $Total_Source = 0;
     
-    my $Line = readLineNum($SrcReport, 0);
-    if($Line=~/affected:(.+?);/) {
+    my $SrcLine = readLineNum($SrcReport, 0);
+    if($SrcLine=~/affected:(.+?);/) {
         $Affected_Source = $1;
     }
-    while($Line=~s/\w+_problems_\w+:(.+?);//) {
-        $Total_Source += $2;
+    while($SrcLine=~s/\w+_problems_\w+:(.+?);//) {
+        $Total_Source += $1;
     }
     
     my %Meta = ();
@@ -2560,6 +2566,10 @@ sub createTimeline()
     
     my @Versions = getVersionsList();
     
+    if(not @Versions) {
+        return;
+    }
+    
     my $CompatRate = "On";
     my $Changelog = "Off";
     my $PkgDiff = "Off";
@@ -2587,7 +2597,7 @@ sub createTimeline()
         $Cols-=2;
     }
     
-    if(not $Profile->{"ShowTotalProblems"}) {
+    if($Profile->{"ShowTotalProblems"} ne "On") {
         $Cols-=2;
     }
     
@@ -2632,8 +2642,8 @@ sub createTimeline()
     
     $Content .= "<th rowspan='2'>Added<br/>Methods</th>\n";
     $Content .= "<th rowspan='2'>Removed<br/>Methods</th>\n";
-    if($Profile->{"ShowTotalProblems"}) {
-        $Content .= "<th colspan='2'>Total Changes</th>\n";
+    if($Profile->{"ShowTotalProblems"} eq "On") {
+        $Content .= "<th colspan='2'>Total<br/>Changes</th>\n";
     }
     
     if($PkgDiff ne "Off") {
@@ -2642,20 +2652,20 @@ sub createTimeline()
     
     $Content .= "</tr>\n";
     
-    if($CompatRate ne "Off" or $Profile->{"ShowTotalProblems"})
+    if($CompatRate ne "Off" or $Profile->{"ShowTotalProblems"} eq "On")
     {
         $Content .= "<tr>\n";
         
         if($CompatRate ne "Off")
         {
-            $Content .= "<th title='Binary compatibility'>BC</th>\n";
-            $Content .= "<th title='Source compatibility'>SC</th>\n";
+            $Content .= "<th title='Binary compatibility' class='bc'>BC</th>\n";
+            $Content .= "<th title='Source compatibility' class='sc'>SC</th>\n";
         }
         
-        if($Profile->{"ShowTotalProblems"})
+        if($Profile->{"ShowTotalProblems"} eq "On")
         {
-            $Content .= "<th title='Binary compatibility'>BC</th>\n";
-            $Content .= "<th title='Source compatibility'>SC</th>\n";
+            $Content .= "<th title='Binary compatibility' class='bc'>BC</th>\n";
+            $Content .= "<th title='Source compatibility' class='sc'>SC</th>\n";
         }
         
         $Content .= "</tr>\n";
@@ -2746,6 +2756,9 @@ sub createTimeline()
                     if(int($BC)>=90) {
                         $CClass = "warning";
                     }
+                    elsif(int($BC)>=80) {
+                        $CClass = "almost_compatible";
+                    }
                     else {
                         $CClass = "incompatible";
                     }
@@ -2761,6 +2774,9 @@ sub createTimeline()
                 {
                     if(int($BC_Source)>=90) {
                         $CClass_Source = "warning";
+                    }
+                    elsif(int($BC_Source)>=80) {
+                        $CClass_Source = "almost_compatible";
                     }
                     else {
                         $CClass_Source = "incompatible";
@@ -2821,7 +2837,7 @@ sub createTimeline()
             $Content .= "<td>N/A</td>\n";
         }
         
-        if($Profile->{"ShowTotalProblems"})
+        if($Profile->{"ShowTotalProblems"} eq "On")
         {
             if(defined $APIReport)
             {
@@ -2832,8 +2848,8 @@ sub createTimeline()
                     $Content .= "<td class='ok'>0</td>\n";
                 }
                 
-                if(my $TotalProblems_Source = $APIReport->{"TotalProblems_Source"}) {
-                    $Content .= "<td class=\'warning\'><a$LinkClass href='../../".$APIReport->{"Source_ReportPath"}."'>$TotalProblems_Source</a></td>\n";
+                if(my $TotalProblems_Source = $APIReport->{"Source_TotalProblems"}) {
+                    $Content .= "<td class=\'warning\'><a$LinkClass href='../../".$APIReport->{"Path"}."'>$TotalProblems_Source</a></td>\n";
                 }
                 else {
                     $Content .= "<td class='ok'>0</td>\n";
@@ -2929,7 +2945,7 @@ sub createGlobalIndex()
     
     writeCss();
     
-    my $Title = "Maintained Java libraries";
+    my $Title = "API Tracker: Maintained Java libraries";
     my $Desc = "List of maintained libraries";
     my $Content = composeHTML_Head($Title, "", $Desc, getTop("global_index"), "report.css", "");
     $Content .= "<body>\n";
