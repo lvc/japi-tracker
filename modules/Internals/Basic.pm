@@ -1,7 +1,7 @@
 ##################################################################
 # Module for Java API Tracker with basic functions
 #
-# Copyright (C) 2015-2016 Andrey Ponomarenko's ABI Laboratory
+# Copyright (C) 2015-2017 Andrey Ponomarenko's ABI Laboratory
 #
 # Written by Andrey Ponomarenko
 #
@@ -19,6 +19,7 @@
 # If not, see <http://www.gnu.org/licenses/>.
 ##################################################################
 use strict;
+use POSIX qw(strftime);
 use Fcntl;
 
 sub findFiles(@)
@@ -113,39 +114,6 @@ sub writeFile($$)
     close(FILE);
 }
 
-sub composeHTML_Head($$$$$)
-{
-    my ($Title, $Keywords, $Description, $TopDir, $Styles, $Scripts) = @_;
-    
-    my $CommonStyles = "common.css";
-    
-    if($Styles)
-    {
-        $CommonStyles = "<link rel=\"stylesheet\" type=\"text/css\" href=\"$TopDir/css/$CommonStyles?v=1.0\" />";
-        $Styles = "<link rel=\"stylesheet\" type=\"text/css\" href=\"$TopDir/css/$Styles?v=1.0\" />";
-    }
-    
-    if($Scripts) {
-        $Scripts = "<script type=\"text/javascript\" src=\"$TopDir/js/$Scripts\"></script>";
-    }
-    
-    return "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">
-    <html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">
-    <head>
-    <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\" />
-    <meta name=\"keywords\" content=\"$Keywords\" />
-    <meta name=\"description\" content=\"$Description\" />
-    $CommonStyles
-    $Styles
-    $Scripts
-    
-    <title>
-        $Title
-    </title>
-    
-    </head>\n";
-}
-
 sub extractPackage($$)
 {
     my ($Path, $OutDir) = @_;
@@ -209,6 +177,49 @@ sub getMajor($)
     }
     
     return join(".", @P);
+}
+
+sub formatNum($)
+{
+    my $Num = $_[0];
+    
+    if($Num=~/\A(\d+\.\d\d)/) {
+        return $1;
+    }
+    
+    return $Num
+}
+
+sub fNum($)
+{
+    my $N = $_[0];
+    if(length($N)==1) {
+        return "0".$N;
+    }
+    return $N;
+}
+
+sub getDate()
+{
+    my ($D, $M, $Y) = (localtime)[3, 4, 5];
+    return (1900+$Y)."-".fNum($M+1)."-".fNum($D);
+}
+
+sub getRssDate($)
+{
+    my $Date = $_[0];
+    
+    my ($Year, $Mon, $Mday, $Hour, $Min) = split(/[\s\-:]+/, $Date);
+    return strftime('%a, %d %b %Y %T', 0, $Min, $Hour, $Mday, $Mon-1, $Year-1900)." ".strftime('%z', localtime);
+}
+
+sub getS($)
+{
+    if($_[0]>1) {
+        return "s";
+    }
+    
+    return "";
 }
 
 return 1;

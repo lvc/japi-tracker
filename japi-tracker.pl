@@ -36,6 +36,7 @@ Getopt::Long::Configure ("posix_default", "no_ignore_case", "permute");
 use File::Path qw(mkpath rmtree);
 use File::Temp qw(tempdir);
 use File::Basename qw(dirname basename);
+use File::Copy qw(copy);
 use Cwd qw(abs_path cwd);
 use Data::Dumper;
 use Digest::MD5 qw(md5_hex);
@@ -48,14 +49,17 @@ my $TMP_DIR = tempdir(CLEANUP=>1);
 my $MODULES_DIR = get_Modules();
 push(@INC, dirname($MODULES_DIR));
 
+# Basic modules
+my %LoadedModules = ();
+loadModule("Basic");
+loadModule("Input");
+loadModule("Utils");
+
 my $JAPICC = "japi-compliance-checker";
 my $JAPICC_VERSION = "1.8";
 
 my $PKGDIFF = "pkgdiff";
 my $PKGDIFF_VERSION = "1.6.4";
-
-my ($Help, $DumpVersion, $Build, $Rebuild, $DisableCache,
-$TargetVersion, $TargetElement, $Clear, $GlobalIndex, $Deploy, $Debug);
 
 my $CmdName = basename($0);
 my $ORIG_DIR = cwd();
@@ -73,7 +77,7 @@ my %ERROR_CODE = (
     "Module_Error"=>9
 );
 
-my $HomePage = "http://abi-laboratory.pro/";
+my $HomePage = "https://abi-laboratory.pro/";
 
 my $ShortUsage = "API Tracker $TOOL_VERSION
 A tool to visualize API changes timeline of a Java library
@@ -92,19 +96,26 @@ if($#ARGV==-1)
     exit(0);
 }
 
-GetOptions("h|help!" => \$Help,
-  "dumpversion!" => \$DumpVersion,
+GetOptions("h|help!" => \$In::Opt{"Help"},
+  "dumpversion!" => \$In::Opt{"DumpVersion"},
 # general options
-  "build!" => \$Build,
-  "rebuild!" => \$Rebuild,
-# internal options
-  "v=s" => \$TargetVersion,
-  "t|target=s" => \$TargetElement,
-  "clear!" => \$Clear,
-  "global-index!" => \$GlobalIndex,
-  "disable-cache!" => \$DisableCache,
-  "deploy=s" => \$Deploy,
-  "debug" => \$Debug
+  "build!" => \$In::Opt{"Build"},
+  "rebuild!" => \$In::Opt{"Rebuild"},
+  "v=s" => \$In::Opt{"TargetVersion"},
+  "t|target=s" => \$In::Opt{"TargetElement"},
+  "clear!" => \$In::Opt{"Clear"},
+  "clean-unused!" => \$In::Opt{"CleanUnused"},
+  "force!" => \$In::Opt{"Force"},
+  "global-index!" => \$In::Opt{"GlobalIndex"},
+  "disable-cache!" => \$In::Opt{"DisableCache"},
+  "deploy=s" => \$In::Opt{"Deploy"},
+  "debug" => \$In::Opt{"Debug"},
+# other options
+  "json-report=s" => \$In::Opt{"JsonReport"},
+  "regen-dump!" => \$In::Opt{"RegenDump"},
+  "rss!" => \$In::Opt{"GenRss"},
+# private options
+  "sponsors=s" => \$In::Opt{"Sponsors"}
 ) or ERR_MESSAGE();
 
 sub ERR_MESSAGE()
@@ -164,9 +175,13 @@ GENERAL OPTIONS:
         changelog
         date
         graph
+        compress
   
   -clear
-      Remove all reports.
+      Remove all reports and API dumps.
+  
+  -clean-unused
+      Remove unused reports and API dumps.
   
   -global-index
       Create list of all tested libraries.
@@ -180,12 +195,26 @@ GENERAL OPTIONS:
   
   -debug
       Enable debug messages.
+
+OTHER OPTIONS:
+  -json-report DIR
+      Generate JSON-format report for a library to DIR.
+  
+  -regen-dump
+      Regenerate API dumps for previous versions if
+      comparing with new ones.
+  
+  -rss
+      Generate RSS feed.
 ";
 
 my $Profile;
 my $DB;
 my $TARGET_LIB;
 my $DB_PATH = undef;
+
+# Sponsors
+my %LibrarySponsor;
 
 # Regenerate reports
 my $ArchivesReport = 0;
@@ -194,6 +223,10 @@ my $ArchivesReport = 0;
 my $LinkClass = " class='num'";
 my $LinkNew = " new";
 my $LinkRemoved = " removed";
+
+# Dumps
+my $COMPRESS = "tar.gz";
+my %DoneDump = ();
 
 sub get_Modules()
 {
@@ -222,11 +255,15 @@ sub get_Modules()
 sub loadModule($)
 {
     my $Name = $_[0];
+    if(defined $LoadedModules{$Name}) {
+        return;
+    }
     my $Path = $MODULES_DIR."/Internals/$Name.pm";
     if(not -f $Path) {
         exitStatus("Module_Error", "can't access \'$Path\'");
     }
     require $Path;
+    $LoadedModules{$Name} = 1;
 }
 
 sub readModule($$)
@@ -272,21 +309,30 @@ sub readProfile($)
     if($Content=~/\A\s*\{\s*((.|\n)+?)\s*\}\s*\Z/)
     {
         my $Info = $1;
+        my $Pos = 0;
         
-        if($Info=~/\"Versions\"/)
+        if($Info=~/\"(Versions|Supports)\"/)
         {
-            my $Pos = 0;
+            my $Subj = $1;
+            $Pos = 0;
             
-            while($Info=~s/(\"Versions\"\s*:\s*\[\s*)(\{\s*(.|\n)+?\s*\})\s*,?\s*/$1/)
+            while($Info=~s/(\"$Subj\"\s*:\s*\[\s*)(\{\s*(.|\n)+?\s*\})\s*,?\s*/$1/)
             {
-                my $VInfo = readProfile($2);
-                if(my $VNum = $VInfo->{"Number"})
+                my $SInfo = readProfile($2);
+                
+                if($Subj eq "Versions")
                 {
-                    $VInfo->{"Pos"} = $Pos++;
-                    $Res{"Versions"}{$VNum} = $VInfo;
+                    if(my $Num = $SInfo->{"Number"})
+                    {
+                        $SInfo->{"Pos"} = $Pos++;
+                        $Res{$Subj}{$Num} = $SInfo;
+                    }
+                    else {
+                        printMsg("ERROR", "version number is missed in the profile");
+                    }
                 }
-                else {
-                    printMsg("ERROR", "version number is missed in the profile");
+                elsif($Subj eq "Supports") {
+                    $Res{$Subj}{$Pos++} = $SInfo;
                 }
             }
         }
@@ -296,7 +342,8 @@ sub readProfile($)
         {
             my ($K, $A) = ($1, $2);
             
-            if($K eq "Versions") {
+            if($K eq "Versions"
+            or $K eq "Supports") {
                 next;
             }
             
@@ -316,7 +363,8 @@ sub readProfile($)
         {
             my ($K, $V) = ($1, $2);
             
-            if($K eq "Versions") {
+            if($K eq "Versions"
+            or $K eq "Supports") {
                 next;
             }
             
@@ -334,9 +382,9 @@ sub skipVersion_T($)
 {
     my $V = $_[0];
     
-    if(defined $TargetVersion)
+    if(defined $In::Opt{"TargetVersion"})
     {
-        if($V ne $TargetVersion)
+        if($V ne $In::Opt{"TargetVersion"})
         {
             return 1;
         }
@@ -380,15 +428,72 @@ sub skipVersion($)
     return 0;
 }
 
+sub cleanUnused()
+{
+    printMsg("INFO", "Cleaning unused data");
+    my @Versions = getVersionsList();
+    
+    my %SeqVer = ();
+    my %PoinVer = ();
+    
+    foreach my $K (0 .. $#Versions)
+    {
+        my $V1 = $Versions[$K];
+        my $V2 = undef;
+        
+        if($K<$#Versions) {
+            $V2 = $Versions[$K+1];
+        }
+        
+        $PoinVer{$V1} = 1;
+        
+        if(defined $V2) {
+            $SeqVer{$V2}{$V1} = 1;
+        }
+    }
+    
+    foreach my $V (keys(%{$DB->{"APIDump"}}))
+    {
+        if(not defined $PoinVer{$V})
+        {
+            printMsg("INFO", "Unused API dump v.$V");
+            
+            if(defined $In::Opt{"Force"}) {
+                rmtree("api_dump/$TARGET_LIB/$V");
+            }
+        }
+    }
+    
+    foreach my $O_V (keys(%{$DB->{"APIReport"}}))
+    {
+        foreach my $V (keys(%{$DB->{"APIReport"}{$O_V}}))
+        {
+            if(not defined $SeqVer{$O_V}{$V})
+            {
+                printMsg("INFO", "Unused API report from $O_V to $V");
+                if(defined $In::Opt{"Force"})
+                {
+                    rmtree("archives_report/$TARGET_LIB/$O_V/$V");
+                    rmtree("compat_report/$TARGET_LIB/$O_V/$V");
+                }
+            }
+        }
+    }
+    
+    if(not defined $In::Opt{"Force"}) {
+        printMsg("INFO", "Use -force option to remove unused data");
+    }
+}
+
 sub buildData()
 {
     my @Versions = getVersionsList();
     
-    if($TargetVersion)
+    if($In::Opt{"TargetVersion"})
     {
-        if(not grep {$_ eq $TargetVersion} @Versions)
+        if(not grep {$_ eq $In::Opt{"TargetVersion"}} @Versions)
         {
-            printMsg("ERROR", "unknown version number \'$TargetVersion\'");
+            printMsg("ERROR", "unknown version number \'".$In::Opt{"TargetVersion"}."\'");
         }
     }
     
@@ -466,13 +571,25 @@ sub buildData()
         }
     }
     
-    if($Rebuild and not $TargetElement and $TargetVersion)
+    if(checkTarget("compress"))
+    {
+        foreach my $V (@Versions)
+        {
+            if(skipVersion_T($V)) {
+                next;
+            }
+            
+            compressAPIDump($V);
+        }
+    }
+    
+    if($In::Opt{"Rebuild"} and not $In::Opt{"TargetElement"} and $In::Opt{"TargetVersion"})
     { # rebuild previous API dump
         my $PV = undef;
         
         foreach my $V (reverse(@Versions))
         {
-            if($V eq $TargetVersion)
+            if($V eq $In::Opt{"TargetVersion"})
             {
                 if(defined $PV)
                 {
@@ -527,8 +644,8 @@ sub buildData()
         $DB->{"SnapshotUpdateTime"} = $SnapshotUpdateTime;
     }
     
-    if(defined $TargetElement
-    and $TargetElement eq "graph")
+    if(defined $In::Opt{"TargetElement"}
+    and $In::Opt{"TargetElement"} eq "graph")
     {
         printMsg("INFO", "Creating graph: API symbols/versions");
         
@@ -592,9 +709,15 @@ sub simpleGraph($$$)
         }
     }
     
+    my $Few = (defined $Profile->{"GraphFewXTics"} and $Profile->{"GraphFewXTics"} eq "On");
+    
     my $Tics = 5;
     if(defined $Profile->{"GraphXTics"}) {
         $Tics = $Profile->{"GraphXTics"};
+    }
+    
+    if($Few) {
+        $Tics = 3;
     }
     
     my $MinVer = $Vs[0];
@@ -629,14 +752,14 @@ sub simpleGraph($$$)
         
         my $V_S = $V;
         
-        if(defined $Profile->{"GraphShortXTics"})
+        if(defined $Profile->{"GraphShortXTics"} and $Profile->{"GraphShortXTics"} eq "On")
         {
             if($V=~tr!\.!!>=2) {
                 $V_S = getMajor($V);
             }
         }
         
-        $V_S=~s/\-(alpha|beta|rc)\d*\Z//g;
+        $V_S=~s/\-(alpha|beta|rc|a|b)[\d\.\-]*\Z//g;
         
         $Content .= $_."  ".$Val;
         
@@ -657,33 +780,35 @@ sub simpleGraph($$$)
     
     my $Delta = $MaxRange - $MinRange;
     
-    if($Delta)
-    {
-        $MinRange -= int($Delta*5/100);
-        $MaxRange += int($Delta*5/100);
-    }
-    else
+    if($Delta<20)
     {
         $MinRange -= 5;
         $MaxRange += 5;
     }
-    
+    else
+    {
+        $MinRange -= int($Delta/20);
+        $MaxRange += int($Delta/20);
+    }
     
     my $Data = $TMP_DIR."/graph.data";
     
     writeFile($Data, $Content);
     
-    my $Title = ""; # Timeline of API changes
+    my $GraphTitle = ""; # Timeline of API changes
     
-    my $GraphPath = "graph/$TARGET_LIB/graph.png";
+    my $GraphPath = "graph/$TARGET_LIB/graph.svg";
     mkpath(getDirname($GraphPath));
     
-    my $Cmd = "gnuplot -e \"set title \'$Title\';";
-    $Cmd .= "set xlabel '".showTitle()." version';";
+    my $Title = showTitle();
+    $Title=~s/\'/''/g;
+    
+    my $Cmd = "gnuplot -e \"set title \'$GraphTitle\';";
+    $Cmd .= "set xlabel '".$Title." version';";
     $Cmd .= "set ylabel 'API symbols';";
     $Cmd .= "set xrange [0:".$#Vs."];";
     $Cmd .= "set yrange [$MinRange:$MaxRange];";
-    $Cmd .= "set terminal png size 400,300;";
+    $Cmd .= "set terminal svg size 380,300;";
     $Cmd .= "set output \'$GraphPath\';";
     $Cmd .= "set nokey;";
     $Cmd .= "set xtics font 'Times, 12';";
@@ -766,44 +891,6 @@ sub matchFile($$)
     return 0;
 }
 
-sub getSover($)
-{
-    my $Name = $_[0];
-    
-    my ($Pre, $Post) = (undef, undef);
-    
-    if($Name=~/\.so\.([\w\.\-]+)/) {
-        $Post = $1;
-    }
-    
-    if($Name=~/(\d+[\d\.]*\-[\w\.\-]*)\.so(\.|\Z)/)
-    { # libMagickCore6-Q16.so.1
-        $Pre = $1;
-    }
-    elsif($Name=~/\-([a-zA-Z]?\d[\w\.\-]*)\.so(\.|\Z)/)
-    { # libMagickCore-6.Q16.so.1
-      # libMagickCore-Q16.so.7
-        $Pre = $1;
-    }
-    elsif(not defined $Post and $Name=~/([\d\.])\.so(\.|\Z)/) {
-        $Pre = $1;
-    }
-    
-    my @V = ();
-    if(defined $Pre) {
-        push(@V, $Pre);
-    }
-    if(defined $Post) {
-        push(@V, $Post);
-    }
-    
-    if(@V) {
-        return join(".", @V);
-    }
-    
-    return undef;
-}
-
 sub updateRequired($)
 {
     my $V = $_[0];
@@ -869,7 +956,7 @@ sub createChangelog($$)
         }
     }
     
-    if(not $Rebuild)
+    if(not $In::Opt{"Rebuild"})
     {
         if(defined $DB->{"Changelog"}{$V})
         {
@@ -1025,7 +1112,7 @@ sub toHtml($$$)
     }
     $Content = getHead("changelog").$Content;
     
-    $Content = composeHTML_Head($Title, $Keywords, $Desc, getTop("changelog"), "changelog.css", "")."\n<body>\n$Content\n</body>\n</html>\n";
+    $Content = composeHTML_Head("changelog", $Title, $Keywords, $Desc, "changelog.css")."\n<body>\n$Content\n</body>\n</html>\n";
     
     return $Content;
 }
@@ -1134,9 +1221,9 @@ sub checkTarget($)
 {
     my $Elem = $_[0];
     
-    if(defined $TargetElement)
+    if(defined $In::Opt{"TargetElement"})
     {
-        if($Elem ne $TargetElement)
+        if($Elem ne $In::Opt{"TargetElement"})
         {
             return 0;
         }
@@ -1149,7 +1236,7 @@ sub detectDate($)
 {
     my $V = $_[0];
     
-    if(not $Rebuild)
+    if(not $In::Opt{"Rebuild"})
     {
         if(defined $DB->{"Date"}{$V})
         {
@@ -1199,7 +1286,7 @@ sub detectDate($)
         my @Files = listPackage($Source);
         my %Dates = ();
         
-        my $Zip = ($Source=~/\.(zip|jar)\Z/i);
+        my $Zip = ($Source=~/\.(zip|jar|aar)\Z/i);
         
         foreach my $Line (@Files)
         {
@@ -1240,7 +1327,7 @@ sub listPackage($)
     if($Path=~/\.(tar\.\w+|tgz|tbz2)\Z/i) {
         $Cmd = "tar -tvf \"$Path\"";
     }
-    elsif($Path=~/\.(zip|jar)\Z/i) {
+    elsif($Path=~/\.(zip|jar|aar)\Z/i) {
         $Cmd = "unzip -l $Path";
     }
     
@@ -1253,11 +1340,51 @@ sub listPackage($)
     return ();
 }
 
+sub readDump($)
+{
+    my $Path = abs_path($_[0]);
+    
+    if($Path!~/\.\Q$COMPRESS\E\Z/) {
+        return readFile($Path);
+    }
+    
+    my $Cmd_E = "tar -xOf \"$Path\"";
+    my $Content = qx/$Cmd_E/;
+    return $Content;
+}
+
+sub compressAPIDump($)
+{
+    my $V = $_[0];
+    
+    foreach my $Md5 (keys(%{$DB->{"APIDump"}{$V}}))
+    {
+        my $DumpPath = $DB->{"APIDump"}{$V}{$Md5}{"Path"};
+        
+        if($DumpPath=~/\.\Q$COMPRESS\E\Z/) {
+            next;
+        }
+        
+        printMsg("INFO", "Compressing $DumpPath");
+        my $Dir = getDirname($DumpPath);
+        my $Name = getFilename($DumpPath);
+        my @Cmd_C = ("tar", "-C", $Dir, "-czf", $DumpPath.".".$COMPRESS, $Name);
+        system(@Cmd_C);
+        
+        if($?) {
+            exitStatus("Error", "Can't compress API dump");
+        }
+        else {
+            unlink($DumpPath);
+        }
+    }
+}
+
 sub createAPIDump($)
 {
     my $V = $_[0];
     
-    if(not $Rebuild)
+    if(not $In::Opt{"Rebuild"})
     {
         if(defined $DB->{"APIDump"}{$V})
         {
@@ -1306,6 +1433,9 @@ sub createAPIDump($)
         
         my $APIDir = $Dir."/".$Md5;
         my $APIDump = $APIDir."/API.dump";
+        if(not $Profile->{"NoCompress"}) {
+            $APIDump .= ".".$COMPRESS;
+        }
         my $Name = getFilename($Ar);
         
         my $Module = getArchiveName(getFilename($Ar), "Short");
@@ -1314,13 +1444,16 @@ sub createAPIDump($)
         }
         
         my $Cmd = $JAPICC." -l \"$Module\" -dump \"".$Ar."\" -dump-path \"".$APIDump."\" -vnum \"$V\"";
+        if(my $DumpOpts = getDump_Options()) {
+            $Cmd .= " ".$DumpOpts;
+        }
         
         if(not $Profile->{"PrivateAPI"})
         { # set "PrivateAPI":1 in the profile to check all symbols
             
         }
         
-        if($Debug) {
+        if($In::Opt{"Debug"}) {
             printMsg("DEBUG", "executing $Cmd");
         }
         
@@ -1331,8 +1464,8 @@ sub createAPIDump($)
             $DB->{"APIDump"}{$V}{$Md5}{"Path"} = $APIDump;
             $DB->{"APIDump"}{$V}{$Md5}{"Archive"} = $RPath;
             
-            my $API = eval(readFile($APIDump));
-            $DB->{"APIDump"}{$V}{$Md5}{"Lang"} = $API->{"Language"};
+            # my $API = eval(readDump($APIDump));
+            # $DB->{"APIDump"}{$V}{$Md5}{"Lang"} = $API->{"Language"};
             
             my $TotalSymbols = countSymbols($DB->{"APIDump"}{$V}{$Md5});
             $DB->{"APIDump"}{$V}{$Md5}{"TotalSymbols"} = $TotalSymbols;
@@ -1340,7 +1473,7 @@ sub createAPIDump($)
             my @Meta = ();
             
             push(@Meta, "\"Archive\": \"".$RPath."\"");
-            push(@Meta, "\"Lang\": \"".$API->{"Language"}."\"");
+            # push(@Meta, "\"Lang\": \"".$API->{"Language"}."\"");
             push(@Meta, "\"TotalSymbols\": \"".$TotalSymbols."\"");
             push(@Meta, "\"PublicAPI\": \"1\"");
             
@@ -1352,6 +1485,8 @@ sub createAPIDump($)
             rmtree($APIDir);
         }
     }
+    
+    $DoneDump{$V} = 1;
 }
 
 sub countSymbolsF($$)
@@ -1360,22 +1495,22 @@ sub countSymbolsF($$)
     
     if(defined $Dump->{"TotalSymbolsFiltered"})
     {
-        if(not defined $DisableCache) {
+        if(not defined $In::Opt{"DisableCache"}) {
             return $Dump->{"TotalSymbolsFiltered"};
         }
     }
     
     my $AccOpts = getJAPICC_Options($V);
     
-    if($AccOpts=~/list|skip|keep/
-    and not $Profile->{"Versions"}{$V}{"WithoutAnnotations"})
+    if(defined $In::Opt{"DisableCache"} or ($AccOpts=~/list|skip|keep|check/
+    and not $Profile->{"Versions"}{$V}{"WithoutAnnotations"}))
     {
         my $Path = $Dump->{"Path"};
         printMsg("INFO", "Counting symbols in the API dump for \'".getFilename($Dump->{"Archive"})."\'");
         
         my $Cmd_C = "$JAPICC -count-methods \"$Path\" $AccOpts";
         
-        if($Debug) {
+        if($In::Opt{"Debug"}) {
             printMsg("DEBUG", "executing $Cmd_C");
         }
         
@@ -1420,7 +1555,7 @@ sub countSymbols($)
     
     my $Cmd_C = "$JAPICC -count-methods \"$Path\"";
     
-    if($Debug) {
+    if($In::Opt{"Debug"}) {
         printMsg("DEBUG", "executing $Cmd_C");
     }
     
@@ -1450,7 +1585,7 @@ sub getArchiveName($$)
     
     if($T=~/Short/)
     {
-        if(not $Name=~s/\A(.+?)[\-\_][v\d\.\-\_]+(|[\-\_\.](final|release|snapshot|RC\d*|beta\d*|alpha\d*))\Z/$1/ig)
+        if(not $Name=~s/\A(.+?)[\-\_][v\d\.\-\_]+(|[\-\_\.](final|release|snapshot|RC\d*|beta\d*|alpha\-?\d*))\Z/$1/ig)
         { # NAME-X.Y.Z-SUBJ.jar
             $Name=~s/\A(.+?)\-[\d\.]+\-(.+?)/$1-$2/ig;
         }
@@ -1470,7 +1605,7 @@ sub createAPIReport($$)
 {
     my ($V1, $V2) = @_;
     
-    if(not $Rebuild)
+    if(not $In::Opt{"Rebuild"})
     {
         if(defined $DB->{"APIReport"}{$V1}{$V2})
         {
@@ -1511,6 +1646,14 @@ sub createAPIReport($$)
             
             # TODO: check if all JARs are dumped
         }
+    }
+    
+    if(defined $In::Opt{"RegenDump"}
+    and $Profile->{"RegenDump"} ne "Off"
+    and not defined $DoneDump{$V1})
+    {
+        print "INFO: Regenerating API dump for $V1\n";
+        delete($DB->{"APIDump"}{$V1});
     }
     
     if(not defined $DB->{"APIDump"}{$V1}) {
@@ -1696,7 +1839,7 @@ sub createAPIReport($$)
     
     if(not $ArchivesReport)
     {
-        if($Rebuild)
+        if($In::Opt{"Rebuild"})
         {
             # Remove old reports
             my $CDir = "compat_report/$TARGET_LIB/$V1/$V2";
@@ -1996,7 +2139,7 @@ sub createAPIReport($$)
     my $Keywords = showTitle().", API, changes, compatibility, report";
     my $Desc = "API changes/compatibility report between $V1 and $V2 versions of the $TARGET_LIB";
     
-    $Report = composeHTML_Head($Title, $Keywords, $Desc, getTop("archives_report"), "report.css", "")."\n<body>\n$Report\n</body>\n</html>\n";
+    $Report = composeHTML_Head("archives_report", $Title, $Keywords, $Desc, "report.css")."\n<body>\n$Report\n</body>\n</html>\n";
     
     my $Output = $Dir."/report.html";
     
@@ -2126,17 +2269,6 @@ sub getMaxPrefix(@)
     return undef;
 }
 
-sub formatNum($)
-{
-    my $Num = $_[0];
-    
-    if($Num=~/\A(\d+\.\d\d)/) {
-        return $1;
-    }
-    
-    return $Num
-}
-
 sub getMd5(@)
 {
     my $Md5 = md5_hex(@_);
@@ -2149,7 +2281,7 @@ sub compareAPIs($$$$)
     
     my $Md5 = getMd5($Ar1, $Ar2);
     
-    if(not $Rebuild)
+    if(not $In::Opt{"Rebuild"})
     {
         if(defined $DB->{"APIReport_D"}{$V1}{$V2}
         and defined $DB->{"APIReport_D"}{$V1}{$V2}{$Md5})
@@ -2182,10 +2314,16 @@ sub compareAPIs($$$$)
         $Module = getFilename($Ar1);
     }
     
+    if($Module eq "classes"
+    and $Profile->{"Versions"}{$V2}{"Source"}=~/\.aar\Z/)
+    { # Support for Android
+        $Module = "classes.jar (".showTitle().")";
+    }
+    
     my $Cmd = $JAPICC." -l \"$Module\" -binary -source -old \"".$Dump1->{"Path"}."\" -new \"".$Dump2->{"Path"}."\" -bin-report-path \"$BinReport\" -src-report-path \"$SrcReport\"";
     
     if(my $AccOpts = getJAPICC_Options($V2)) {
-        $Cmd .= $AccOpts;
+        $Cmd .= " ".$AccOpts;
     }
     
     if($Profile->{"Versions"}{$V2}{"AddedAnnotations"}) {
@@ -2232,7 +2370,7 @@ sub compareAPIs($$$$)
     
     $Cmd .= " -limit-affected 5";
     
-    if($Debug) {
+    if($In::Opt{"Debug"}) {
         printMsg("DEBUG", "executing $Cmd");
     }
     
@@ -2337,36 +2475,55 @@ sub compareAPIs($$$$)
 sub getJAPICC_Options($)
 {
     my $V = $_[0];
-    my $Opt = "";
+    my @Opts = ();
     
     if(my $SkipPackages = $Profile->{"SkipPackages"}) {
-        $Opt .= " -skip-packages \"$SkipPackages\"";
+        push(@Opts, "-skip-packages \"$SkipPackages\"");
     }
     
     if(my $SkipClasses = $Profile->{"SkipClasses"}) {
-        $Opt .= " -skip-classes \"$SkipClasses\"";
+        push(@Opts, "-skip-classes \"$SkipClasses\"");
     }
     
     if(my $SkipInternalPackages = $Profile->{"SkipInternalPackages"}) {
-        $Opt .= " -skip-internal-packages \"$SkipInternalPackages\"";
+        push(@Opts, "-skip-internal-packages \"$SkipInternalPackages\"");
     }
     
     if(my $SkipInternalTypes = $Profile->{"SkipInternalTypes"}) {
-        $Opt .= " -skip-internal-types \"$SkipInternalTypes\"";
+        push(@Opts, "-skip-internal-types \"$SkipInternalTypes\"");
+    }
+    
+    if(my $CheckPackages = $Profile->{"CheckPackages"}) {
+        push(@Opts, "-check-packages \"$CheckPackages\"");
     }
     
     if(not $Profile->{"Versions"}{$V}{"WithoutAnnotations"})
     {
         if(my $AnnotationList = $Profile->{"AnnotationList"}) {
-            $Opt .= " -annotations-list \"$AnnotationList\"";
+            push(@Opts, "-annotations-list \"$AnnotationList\"");
         }
         
         if(my $SkipAnnotationList = $Profile->{"SkipAnnotationList"}) {
-            $Opt .= " -skip-annotations-list \"$SkipAnnotationList\"";
+            push(@Opts, "-skip-annotations-list \"$SkipAnnotationList\"");
         }
     }
     
-    return $Opt;
+    if(my $DumpOpts = getDump_Options()) {
+        push(@Opts, $DumpOpts);
+    }
+    
+    return join(" ", @Opts);
+}
+
+sub getDump_Options()
+{
+    my @Opts = ();
+    
+    if($Profile->{"KeepInternal"} eq "On") {
+        push(@Opts, "--keep-internal");
+    }
+    
+    return join(" ", @Opts);
 }
 
 sub createPkgdiff($$)
@@ -2374,11 +2531,11 @@ sub createPkgdiff($$)
     my ($V1, $V2) = @_;
     
     if($Profile->{"Versions"}{$V2}{"PkgDiff"} ne "On"
-    and not (defined $TargetVersion and defined $TargetElement)) {
+    and not (defined $In::Opt{"TargetVersion"} and defined $In::Opt{"TargetElement"})) {
         return 0;
     }
     
-    if(not $Rebuild)
+    if(not $In::Opt{"Rebuild"})
     {
         if(defined $DB->{"PackageDiff"}{$V1}{$V2}) {
             return 0;
@@ -2418,35 +2575,13 @@ sub showTitle()
     return $TARGET_LIB;
 }
 
-sub getTop($)
-{
-    my $Page = $_[0];
-    
-    my $Rel = "";
-    
-    if($Page=~/\A(changelog)\Z/) {
-        $Rel = "../../..";
-    }
-    elsif($Page=~/\A(archives_report)\Z/) {
-        $Rel = "../../../..";
-    }
-    elsif($Page=~/\A(timeline)\Z/) {
-        $Rel = "../..";
-    }
-    elsif($Page=~/\A(global_index)\Z/) {
-        $Rel = ".";
-    }
-    
-    return $Rel;
-}
-
 sub getHead($)
 {
     my $Sel = $_[0];
     
     my $UrlPr = getTop($Sel);
     
-    my $ReportHeader = "API<br/>Tracker";
+    my $ReportHeader = "API<br/>Tracker 4J";
     if(defined $Profile->{"ReportHeader"}) {
         $ReportHeader = $Profile->{"ReportHeader"};
     }
@@ -2511,15 +2646,6 @@ sub getSign($)
     return $Sign;
 }
 
-sub getS($)
-{
-    if($_[0]>1) {
-        return "s";
-    }
-    
-    return "";
-}
-
 sub getVersionsList()
 {
     my @Versions = keys(%{$Profile->{"Versions"}});
@@ -2553,16 +2679,37 @@ sub writeCss()
     writeFile("css/changelog.css", readModule("Styles", "Changelog.css"));
 }
 
+sub writeJs()
+{
+    writeFile("js/index.js", readModule("Js", "Index.js"));
+}
+
+sub writeImages()
+{
+    my $ImgDir = $MODULES_DIR."/Internals/Images";
+    if(not -d "images/") {
+        mkpath("images/");
+    }
+    foreach my $Img (listDir($ImgDir)) {
+        copy($ImgDir."/".$Img, "images/");
+    }
+}
+
 sub createTimeline()
 {
     $DB->{"Updated"} = time;
     
     writeCss();
+    writeJs();
+    writeImages();
     
     my $Title = showTitle().": API changes review";
     my $Desc = "API compatibility analysis reports for ".showTitle();
-    my $Content = composeHTML_Head($Title, $TARGET_LIB.", API, compatibility, report", $Desc, getTop("timeline"), "report.css", "");
+    my $Content = composeHTML_Head("timeline", $Title, $TARGET_LIB.", API, compatibility, report", $Desc, "report.css");
     $Content .= "<body>\n";
+    
+    my @Rss = ();
+    my $RssLink = $HomePage."java/tracker/timeline/$TARGET_LIB";
     
     my @Versions = getVersionsList();
     
@@ -2573,9 +2720,14 @@ sub createTimeline()
     my $CompatRate = "On";
     my $Changelog = "Off";
     my $PkgDiff = "Off";
+    my $ShowDate = "On";
     
     if($Profile->{"CompatRate"} eq "Off") {
         $CompatRate = "Off";
+    }
+    
+    if($Profile->{"Date"} eq "Off") {
+        $ShowDate = "Off";
     }
     
     foreach my $V (@Versions)
@@ -2609,6 +2761,10 @@ sub createTimeline()
         $Cols-=1;
     }
     
+    if($ShowDate eq "Off") {
+        $Cols-=1;
+    }
+    
     $Content .= getHead("timeline");
     
     my $ContentHeader = "API changes review";
@@ -2616,13 +2772,21 @@ sub createTimeline()
         $ContentHeader = $Profile->{"ContentHeader"};
     }
     
+    if($In::Opt{"GenRss"}) {
+        $ContentHeader .= " <a rel='alternate' type='application/rss+xml' href='../../rss/$TARGET_LIB/feed.rss' title='RSS: subscribe for API reports'><img src='../../images/RSS.png' class='rss' alt='RSS' /></a>";
+    }
+    
     $Content .= "<h1>".$ContentHeader."</h1>\n";
     $Content .= "<br/>";
     $Content .= "<br/>";
     
-    my $GraphPath = "graph/$TARGET_LIB/graph.png";
+    my $GraphPath = "graph/$TARGET_LIB/graph.svg";
+    my $ShowGraph = (-f $GraphPath);
+    my $ShowSponsor = (defined $In::Opt{"Sponsors"});
     
-    if(-f $GraphPath) {
+    my $RightSide = ($ShowGraph or $ShowSponsor);
+    
+    if($RightSide) {
         $Content .= "<table cellpadding='0' cellspacing='0'><tr><td valign='top'>\n";
     }
     
@@ -2630,7 +2794,10 @@ sub createTimeline()
     
     $Content .= "<tr>\n";
     $Content .= "<th rowspan='2'>Version</th>\n";
-    $Content .= "<th rowspan='2'>Date</th>\n";
+    
+    if($ShowDate ne "Off") {
+        $Content .= "<th rowspan='2'>Date</th>\n";
+    }
     
     if($Changelog ne "Off") {
         $Content .= "<th rowspan='2'>Change<br/>Log</th>\n";
@@ -2692,14 +2859,9 @@ sub createTimeline()
         }
         
         my $Date = "N/A";
-        my $Sover = "N/A";
         
         if(defined $DB->{"Date"} and defined $DB->{"Date"}{$V}) {
             $Date = $DB->{"Date"}{$V};
-        }
-        
-        if(defined $DB->{"Sover"} and defined $DB->{"Sover"}{$V}) {
-            $Sover = $DB->{"Sover"}{$V};
         }
         
         my $Anchor = $V;
@@ -2710,7 +2872,10 @@ sub createTimeline()
         $Content .= "<tr id='".$Anchor."'>";
         
         $Content .= "<td title='".getFilename($Profile->{"Versions"}{$V}{"Source"})."'>".$V."</td>\n";
-        $Content .= "<td>".showDate($V, $Date)."</td>\n";
+        
+        if($ShowDate ne "Off") {
+            $Content .= "<td>".showDate($V, $Date)."</td>\n";
+        }
         
         if($Changelog ne "Off")
         {
@@ -2795,7 +2960,7 @@ sub createTimeline()
                     $BC_Summary .= "<span class='note'>".join("<br/>", @Note)."</span>\n";
                 }
                 
-                if($BC_Summary eq $BC_Summary_Source) {
+                if($BC_Summary eq $BC_Summary_Source and $CClass eq $CClass_Source) {
                     $Content .= "<td colspan='2' class=\'$CClass\'>$BC_Summary</td>\n";
                 }
                 else
@@ -2883,6 +3048,58 @@ sub createTimeline()
         {
             $Content .= "<tr><td class='comment' colspan=\'$Cols\'>NOTE: $Comment</td></tr>\n";
         }
+        
+        if($In::Opt{"GenRss"} and defined $APIReport and $V ne "current")
+        {
+            my @RssSum = ("Binary compatibility: ".$APIReport->{"BC"}."%");
+            if(my $TotalProblems = $APIReport->{"TotalProblems"})
+            {
+                if($APIReport->{"BC"} eq 100) {
+                    push(@RssSum, "$TotalProblems warning".getS($TotalProblems));
+                }
+                else {
+                    push(@RssSum, "$TotalProblems problem".getS($TotalProblems));
+                }
+            }
+            if(my $ArchivesAdded = $APIReport->{"ArchivesAdded"}) {
+                push(@RssSum, "added $ArchivesAdded archive".getS($ArchivesAdded));
+            }
+            if(my $ArchivesRemoved = $APIReport->{"ArchivesRemoved"}) {
+                push(@RssSum, "removed $ArchivesRemoved archive".getS($ArchivesRemoved));
+            }
+            if(my $Added = $APIReport->{"Added"}) {
+                push(@RssSum, "added $Added method".getS($Added));
+            }
+            if(my $Removed = $APIReport->{"Removed"}) {
+                push(@RssSum, "removed $Removed method".getS($Removed));
+            }
+            
+            my $Desc = join(", ", @RssSum).".";
+            
+            my @RssSum_Source = ("Source compatibility: ".$APIReport->{"Source_BC"}."%");
+            
+            if(my $TotalProblems_Source = $APIReport->{"Source_TotalProblems"})
+            {
+                if($APIReport->{"Source_BC"} eq 100) {
+                    push(@RssSum_Source, "$TotalProblems_Source warning".getS($TotalProblems_Source));
+                }
+                else {
+                    push(@RssSum_Source, "$TotalProblems_Source problem".getS($TotalProblems_Source));
+                }
+            }
+            
+            $Desc .= " ".join(", ", @RssSum_Source).".";
+            
+            my $RssItem = "<item>\n";
+            $RssItem .= "    <title>".showTitle()." $V</title>\n";
+            $RssItem .= "    <link>$RssLink</link>\n";
+            $RssItem .= "    <description>".$Desc."</description>\n";
+            $RssItem .= "    <pubDate>".getRssDate($DB->{"Date"}{$V})."</pubDate>\n";
+            $RssItem .= "</item>";
+            
+            $RssItem=~s/\n/\n    /gs;
+            push(@Rss, "    ".$RssItem);
+        }
     }
     
     $Content .= "</table>";
@@ -2899,19 +3116,79 @@ sub createTimeline()
         $Content .= "Maintained by $M. ";
     }
     
-    my $Date = localtime($DB->{"Updated"});
-    $Date=~s/(\d\d:\d\d):\d\d/$1/;
+    my $UpdateTime = localtime($DB->{"Updated"});
+    $UpdateTime=~s/(\d\d:\d\d):\d\d/$1/;
     
-    $Content .= "Last updated on ".$Date.".";
+    $Content .= "Last updated on ".$UpdateTime.".";
     
     $Content .= "<br/>";
     $Content .= "<br/>";
     $Content .= "Generated by <a href='https://github.com/lvc/japi-tracker'>Java API Tracker</a> and <a href='https://github.com/lvc/japi-compliance-checker'>JAPICC</a> tools.";
     
-    if(-f $GraphPath)
+    if($RightSide)
     {
-        $Content .= "</td><td width='100%' valign='top' align='left' style='padding-left:4em;'>\n";
-        $Content .= "<img src=\'../../$GraphPath\' alt='Timeline of API changes' />\n";
+        $Content .= "</td>";
+        $Content .= "<td width='100%' valign='top' align='left' style='padding-left:2em;'>\n";
+        
+        if($ShowSponsor)
+        {
+            if(not defined $LibrarySponsor{$TARGET_LIB})
+            {
+                $Content .= "<div class='become_sponsor'>\n";
+                $Content .= "Become a <a href='https://abi-laboratory.pro/index.php?view=sponsor-java'>sponsor</a><br/>of this report";
+                $Content .= "</div>\n";
+            }
+            
+            $Content .= "<br/>\n";
+        }
+        
+        if($ShowGraph)
+        {
+            $Content .= "<img src=\'../../$GraphPath\' alt='Timeline of API changes' />\n";
+            $Content .= "<br/>\n";
+            $Content .= "<br/>\n";
+            $Content .= "<br/>\n";
+            $Content .= "<p/>\n";
+        }
+        
+        if($ShowSponsor)
+        {
+            my %Weight = (
+                "Bronze"  => 1,
+                "Silver"  => 2,
+                "Gold"    => 3,
+                "Diamond" => 4
+            );
+            if(defined $LibrarySponsor{$TARGET_LIB})
+            {
+                my $Sponsors = $LibrarySponsor{$TARGET_LIB};
+                
+                $Content .= "<div class='sponsor'>\n";
+                $Content .= "This report is<br/>supported by<p/>\n";
+                
+                foreach my $SName (sort {$Weight{$Sponsors->{$b}{"Status"}}<=>$Weight{$Sponsors->{$a}{"Status"}}} sort keys(%{$Sponsors}))
+                {
+                    my $Sponsor = $Sponsors->{$SName};
+                    my $Logo = $Sponsor->{"Logo"};
+                    
+                    $Content .= "<a href='".$Sponsor->{"Url"}."'>";
+                    
+                    if($Logo and -f $Logo) {
+                        $Content .= "<img src=\'../../$Logo\' alt='".$SName."' class='sponsor' />";
+                    }
+                    else {
+                        $Content .= $SName;
+                    }
+                    
+                    $Content .= "</a>\n";
+                    $Content .= "<p/>\n";
+                }
+                $Content .= "</div>\n";
+            }
+            
+            $Content .= "<br/>\n";
+        }
+        
         $Content .= "</td>\n";
         $Content .=  "</tr>\n";
         $Content .= "</table>\n";
@@ -2924,6 +3201,135 @@ sub createTimeline()
     my $Output = "timeline/".$TARGET_LIB."/index.html";
     writeFile($Output, $Content);
     printMsg("INFO", "The index has been generated to: $Output");
+    
+    if($In::Opt{"GenRss"})
+    {
+        my $RssFeed = "<?xml version='1.0' encoding='UTF-8' ?>\n";
+        $RssFeed .= "<rss version='2.0'>\n\n";
+        $RssFeed .= "<channel>\n";
+        $RssFeed .= "<title>API changes review for ".showTitle()."</title>\n";
+        $RssFeed .= "<link>$RssLink</link>\n";
+        $RssFeed .= "<description>Binary compatibility analysis reports for ".showTitle()."</description>\n";
+        $RssFeed .= join("\n", @Rss)."\n";
+        $RssFeed .= "</channel>\n\n";
+        $RssFeed .= "</rss>\n";
+        
+        writeFile("rss/".$TARGET_LIB."/feed.rss", $RssFeed);
+    }
+}
+
+sub createJsonReport($)
+{
+    my $Dir = $_[0];
+    
+    if(not -d $Dir) {
+        exitStatus("Access_Error", "can't access directory \'$Dir\'");
+    }
+    
+    my $MaxLen_C = 9;
+    my $MaxLen_V = 16;
+    my @Common = ();
+    
+    my %ShowKey = (
+        "Source_BC" => "Src_BC",
+        "Source_TotalProblems" => "Src_TotalProblems"
+    );
+    
+    foreach my $K ("Title", "SourceUrl", "Tracker", "Maintainer")
+    {
+        my $Sp = "";
+        foreach (0 .. $MaxLen_C - length($K)) {
+            $Sp .= " ";
+        }
+        
+        my $Val = undef;
+        
+        if(defined $Profile->{$K}) {
+            $Val = $Profile->{$K};
+        }
+        elsif($K eq "Tracker") {
+            $Val = $HomePage."java/tracker/timeline/".$TARGET_LIB."/";
+        }
+        elsif($K eq "Title") {
+            $Val = $TARGET_LIB;
+        }
+        
+        if($Val) {
+            push(@Common, "\"$K\": ".$Sp."\"$Val\"");
+        }
+    }
+    
+    my @RInfo = ();
+    my @Versions = getVersionsList();
+    
+    foreach my $P (0 .. $#Versions)
+    {
+        my $V = $Versions[$P];
+        
+        if($V eq "current") {
+            next;
+        }
+        
+        my $O_V = undef;
+        if($P<$#Versions) {
+            $O_V = $Versions[$P+1];
+        }
+        
+        if(defined $DB->{"APIReport"} and defined $DB->{"APIReport"}{$O_V}
+        and defined $DB->{"APIReport"}{$O_V}{$V})
+        {
+            my $APIReport = $DB->{"APIReport"}{$O_V}{$V};
+            my @VInfo = ();
+            
+            foreach my $K ("Version", "From", "BC", "Added", "Removed", "TotalProblems", "Source_BC", "Source_TotalProblems", "ArchivesAdded", "ArchivesRemoved", "TotalArchives")
+            {
+                my $Val = undef;
+                
+                if(defined $APIReport->{$K}) {
+                    $Val = $APIReport->{$K};
+                }
+                elsif($K eq "Version") {
+                    $Val = $V;
+                }
+                elsif($K eq "From") {
+                    $Val = $O_V;
+                }
+                else {
+                    next;
+                }
+                
+                if($K eq "BC" or $K eq "Source_BC") {
+                    $Val .= "%";
+                }
+                
+                my $SK = $K;
+                
+                if(defined $ShowKey{$K}) {
+                    $SK = $ShowKey{$K};
+                }
+                
+                my $Sp = "";
+                foreach (0 .. $MaxLen_V - length($SK)) {
+                    $Sp .= " ";
+                }
+                
+                if($K!~/BC|Version/ and int($Val) eq $Val)
+                { # integer
+                    push(@VInfo, "\"$SK\": $Sp".$Val);
+                }
+                else
+                { # string
+                    push(@VInfo, "\"$SK\": $Sp\"".$Val."\"");
+                }
+            }
+            
+            push(@RInfo, "{\n    ".join(",\n    ", @VInfo)."\n  }");
+        }
+    }
+    
+    my $Report = "{\n  ".join(",\n  ", @Common).",\n\n  \"Reports\": [\n  ".join(",\n  ", @RInfo)."]\n}\n";
+    
+    writeFile($Dir."/$TARGET_LIB.json", $Report);
 }
 
 sub createGlobalIndex()
@@ -2944,21 +3350,50 @@ sub createGlobalIndex()
     }
     
     writeCss();
+    writeJs();
+    writeImages();
     
     my $Title = "API Tracker: Maintained Java libraries";
     my $Desc = "List of maintained libraries";
-    my $Content = composeHTML_Head($Title, "", $Desc, getTop("global_index"), "report.css", "");
-    $Content .= "<body>\n";
+    my $Content = composeHTML_Head("global_index", $Title, "", $Desc, "report.css", "index.js");
+    $Content .= "<body onload=\"applyFilter(document.getElementById('Filter'), 'List', 'Header', 'Note')\">\n";
     
     $Content .= getHead("global_index");
     
-    $Content .= "<h1>Maintained Java libraries (".($#Libs+1).")</h1>\n";
-    $Content .= "<br/>";
-    $Content .= "<br/>";
+    $Content .= "<h1>Maintained libraries (".($#Libs+1).")</h1>\n";
+    $Content .= "<br/>\n";
     
-    $Content .= "<table cellpadding='3' class='summary'>\n";
+    if($#Libs>=10)
+    {
+        my $E = "applyFilter(this, 'List', 'Header', 'Note')";
+        
+        $Content .= "<table cellpadding='0' cellspacing='0'>";
+        $Content .= "<tr>\n";
+        
+        $Content .= "<td>\n";
+        $Content .= "Filter:&nbsp;";
+        $Content .= "</td>\n";
+        
+        $Content .= "<td valign='bottom'>\n";
+        
+        $Content .= "<textarea id='Filter' autofocus='autofocus' rows='1' cols='20' style='border:solid 1px black' name='search' onkeydown='if(event.keyCode == 13) {return false;}' onkeyup=\"$E\"></textarea>\n";
+        $Content .= "</td>\n";
+        
+        $Content .= "</tr>\n";
+        $Content .= "</table>\n";
+        
+        $Content .= "<div id='Note' style='display:none;visibility:hidden;'>\n";
+        $Content .= "<p/>\n";
+        $Content .= "<br/>\n";
+        $Content .= "No info (<a href=\'$HomePage?view=abi-tracker\'>add</a> a library)\n";
+        $Content .= "</div>\n";
+    }
     
-    $Content .= "<tr>\n";
+    $Content .= "<p/>\n";
+    
+    $Content .= "<table id='List' cellpadding='3' class='summary highlight list'>\n";
+    
+    $Content .= "<tr id='Header'>\n";
     $Content .= "<th>Name</th>\n";
     $Content .= "<th>API Changes<br/>Review</th>\n";
     # $Content .= "<th>Maintainer</th>\n";
@@ -2995,7 +3430,7 @@ sub createGlobalIndex()
     foreach my $L (sort {lc($LibAttr{$a}{"Title"}) cmp lc($LibAttr{$b}{"Title"})} @Libs)
     {
         $Content .= "<tr>\n";
-        $Content .= "<td class='sl'>".$LibAttr{$L}{"Title"}."</td>\n";
+        $Content .= "<td>".$LibAttr{$L}{"Title"}."</td>\n";
         $Content .= "<td><a href='timeline/$L/index.html'>review</a></td>\n";
         
         # my $M = $LibAttr{$L}{"Maintainer"};
@@ -3101,9 +3536,13 @@ sub checkFiles()
                 
                 $Info{"Path"} = $Dir."/API.dump";
                 
+                if(-e $Info{"Path"}.".".$COMPRESS) {
+                    $Info{"Path"} .= ".".$COMPRESS;
+                }
+                
                 my $Meta = readProfile(readFile($Dir."/meta.json"));
                 $Info{"Archive"} = $Meta->{"Archive"};
-                $Info{"Lang"} = $Meta->{"Lang"};
+                # $Info{"Lang"} = $Meta->{"Lang"};
                 $Info{"TotalSymbols"} = $Meta->{"TotalSymbols"};
                 
                 $DB->{"APIDump"}{$V}{$Md5} = \%Info;
@@ -3294,31 +3733,31 @@ sub scenario()
     
     $SIG{INT} = \&safeExit;
     
-    if($Rebuild) {
-        $Build = 1;
+    if($In::Opt{"Rebuild"}) {
+        $In::Opt{"Build"} = 1;
     }
     
-    if($TargetElement)
+    if($In::Opt{"TargetElement"})
     {
-        if($TargetElement!~/\A(date|dates|changelog|apidump|apireport|pkgdiff|packagediff|graph|archivesreport)\Z/)
+        if($In::Opt{"TargetElement"}!~/\A(date|dates|changelog|apidump|apireport|pkgdiff|packagediff|graph|archivesreport|compress)\Z/)
         {
             exitStatus("Error", "the value of -target option should be one of the following: date, changelog, apidump, apireport, pkgdiff.");
         }
     }
     
-    if($TargetElement eq "archivesreport")
+    if($In::Opt{"TargetElement"} eq "archivesreport")
     {
-        $TargetElement = "apireport";
+        $In::Opt{"TargetElement"} = "apireport";
         $ArchivesReport = 1;
     }
     
-    if($DumpVersion)
+    if($In::Opt{"DumpVersion"})
     {
         printMsg("INFO", $TOOL_VERSION);
         exit(0);
     }
     
-    if($Help)
+    if($In::Opt{"Help"})
     {
         printMsg("INFO", $HelpMessage);
         exit(0);
@@ -3327,8 +3766,6 @@ sub scenario()
     if(-d "objects_report") {
         exitStatus("Error", "Can't execute inside the ABI tracker home directory");
     }
-    
-    loadModule("Basic");
     
     # check API CC
     if(my $Version = getToolVer($JAPICC))
@@ -3389,7 +3826,40 @@ sub scenario()
         $TARGET_LIB = $Profile->{"Name"};
         $DB_PATH = "db/".$TARGET_LIB."/".$DB_NAME;
         
-        if($Clear)
+        if(my $SponsorsFile = $In::Opt{"Sponsors"})
+        {
+            if(not -f $SponsorsFile) {
+                exitStatus("Access_Error", "can't access \'$SponsorsFile\'");
+            }
+            
+            my $Supports = readProfile(readFile($SponsorsFile));
+            my $CurDate = getDate();
+            
+            foreach my $N (sort {$a<=>$b} keys(%{$Supports->{"Supports"}}))
+            {
+                my $Support = $Supports->{"Supports"}{$N};
+                my $Till = delete($Support->{"Till"});
+                
+                if(($Till cmp $CurDate) == -1) {
+                    next;
+                }
+                
+                my $Libs = delete($Support->{"Libraries"});
+                
+                foreach my $L (@{$Libs})
+                {
+                    if($L eq "*") {
+                        $L = $TARGET_LIB;
+                    }
+                    $LibrarySponsor{$L}{$Support->{"Name"}} = $Support;
+                }
+            }
+        }
+        
+        $In::Opt{"TargetLib"} = $TARGET_LIB;
+        $In::Opt{"DBPath"} = $DB_PATH;
+        
+        if($In::Opt{"Clear"})
         {
             printMsg("INFO", "Remove $DB_PATH");
             unlink($DB_PATH);
@@ -3411,7 +3881,11 @@ sub scenario()
         checkDB();
         checkFiles();
         
-        if($Build)
+        if($In::Opt{"CleanUnused"}) {
+            cleanUnused();
+        }
+        
+        if($In::Opt{"Build"})
         {
             writeDB($DB_PATH);
             buildData();
@@ -3419,27 +3893,32 @@ sub scenario()
         
         writeDB($DB_PATH);
         
-        createTimeline();
+        if(my $ToDir = $In::Opt{"JsonReport"}) {
+            createJsonReport($ToDir);
+        }
+        else {
+            createTimeline();
+        }
     }
     
-    if($GlobalIndex) {
+    if($In::Opt{"GlobalIndex"}) {
         createGlobalIndex();
     }
     
-    if($Deploy)
+    if(my $ToDir = $In::Opt{"Deploy"})
     {
-        printMsg("INFO", "Deploy to $Deploy");
-        $Deploy = abs_path($Deploy);
+        printMsg("INFO", "Deploy to $ToDir");
+        $ToDir = abs_path($ToDir);
         
-        if(not -d $Deploy) {
-            mkpath($Deploy);
+        if(not -d $ToDir) {
+            mkpath($ToDir);
         }
         
         if($TARGET_LIB)
         {
             # clear deploy directory
             foreach my $Dir (@Reports) {
-                rmtree($Deploy."/".$Dir."/".$TARGET_LIB);
+                rmtree($ToDir."/".$Dir."/".$TARGET_LIB);
             }
             
             # copy reports
@@ -3448,18 +3927,18 @@ sub scenario()
                 if(-d $Dir."/".$TARGET_LIB)
                 {
                     printMsg("INFO", "Copy $Dir/$TARGET_LIB");
-                    mkpath($Deploy."/".$Dir);
-                    system("cp -fr \"$Dir/$TARGET_LIB\" \"$Deploy/$Dir/\"");
+                    mkpath($ToDir."/".$Dir);
+                    system("cp -fr \"$Dir/$TARGET_LIB\" \"$ToDir/$Dir/\"");
                 }
             }
             printMsg("INFO", "Copy css");
-            system("cp -fr css \"$Deploy/\"");
+            system("cp -fr css \"$ToDir/\"");
         }
         else
         {
             # clear deploy directory
             foreach my $Dir (@Reports) {
-                rmtree($Deploy."/".$Dir);
+                rmtree($ToDir."/".$Dir);
             }
             
             # copy reports
@@ -3468,11 +3947,11 @@ sub scenario()
                 if(-d $Dir)
                 {
                     printMsg("INFO", "Copy $Dir");
-                    system("cp -fr \"$Dir\" \"$Deploy/\"");
+                    system("cp -fr \"$Dir\" \"$ToDir/\"");
                 }
             }
             printMsg("INFO", "Copy css");
-            system("cp -fr css \"$Deploy/\"");
+            system("cp -fr css \"$ToDir/\"");
         }
     }
 }

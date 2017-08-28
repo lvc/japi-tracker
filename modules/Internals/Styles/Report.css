@@ -30,7 +30,7 @@ a.home {
     text-decoration:none;
 }
 
-a.num {
+a.num:not(:hover) {
     color:#000000;
     text-decoration:none;
 }
@@ -67,8 +67,9 @@ table.summary td.archive {
     white-space:normal;
     word-wrap:break-word;
 }
-table.summary td.sl {
-    max-width:7em;
+table.list td {
+    max-width:6.65em;
+    min-width:6em;
     white-space:normal;
     word-wrap:break-word;
 }
@@ -83,4 +84,7 @@ table.summary th.bc {
 }
 table.summary th.sc {
     min-width:3em;
+}
+.highlight tr:hover {
+    background-color:#E0E0E0;
 }
