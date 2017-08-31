@@ -14,8 +14,8 @@
 # REQUIREMENTS
 # ============
 #  Perl 5 (5.8 or newer)
-#  Java API Compliance Checker (1.8 or newer)
-#  Java API Monitor (1.1 or newer)
+#  Java API Compliance Checker (2.3 or newer)
+#  Java API Monitor (1.2 or newer)
 #  PkgDiff (1.6.4 or newer)
 #
 # This program is free software: you can redistribute it and/or modify
@@ -56,7 +56,7 @@ loadModule("Input");
 loadModule("Utils");
 
 my $JAPICC = "japi-compliance-checker";
-my $JAPICC_VERSION = "1.8";
+my $JAPICC_VERSION = "2.3";
 
 my $PKGDIFF = "pkgdiff";
 my $PKGDIFF_VERSION = "1.6.4";
@@ -1654,6 +1654,14 @@ sub createAPIReport($$)
     {
         print "INFO: Regenerating API dump for $V1\n";
         delete($DB->{"APIDump"}{$V1});
+    }
+    
+    if(defined $In::Opt{"RegenDump"}
+    and $Profile->{"RegenDump"} ne "Off"
+    and not defined $DoneDump{$V2})
+    {
+        print "INFO: Regenerating API dump for $V2\n";
+        delete($DB->{"APIDump"}{$V2});
     }
     
     if(not defined $DB->{"APIDump"}{$V1}) {
