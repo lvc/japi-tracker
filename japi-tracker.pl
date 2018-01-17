@@ -1,9 +1,9 @@
 #!/usr/bin/perl
 ##################################################################
-# Java API Tracker 1.2
+# Java API Tracker 1.3
 # A tool to visualize API changes timeline of a Java library
 #
-# Copyright (C) 2015-2017 Andrey Ponomarenko's ABI Laboratory
+# Copyright (C) 2015-2018 Andrey Ponomarenko's ABI Laboratory
 #
 # Written by Andrey Ponomarenko
 #
@@ -14,22 +14,24 @@
 # REQUIREMENTS
 # ============
 #  Perl 5 (5.8 or newer)
-#  Java API Compliance Checker (2.3 or newer)
-#  Java API Monitor (1.2 or newer)
+#  Java API Compliance Checker (2.4 or newer)
+#  Java API Monitor (1.3 or newer)
 #  PkgDiff (1.6.4 or newer)
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License or the GNU Lesser
-# General Public License as published by the Free Software Foundation.
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
 #
-# This program is distributed in the hope that it will be useful,
+# This library is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
 #
-# You should have received a copy of the GNU General Public License
-# and the GNU Lesser General Public License along with this program.
-# If not, see <http://www.gnu.org/licenses/>.
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+# MA  02110-1301  USA.
 ##################################################################
 use Getopt::Long;
 Getopt::Long::Configure ("posix_default", "no_ignore_case", "permute");
@@ -41,7 +43,7 @@ use Cwd qw(abs_path cwd);
 use Data::Dumper;
 use Digest::MD5 qw(md5_hex);
 
-my $TOOL_VERSION = "1.2";
+my $TOOL_VERSION = "1.3";
 my $DB_NAME = "Tracker.data";
 my $TMP_DIR = tempdir(CLEANUP=>1);
 
@@ -81,8 +83,8 @@ my $HomePage = "https://abi-laboratory.pro/";
 
 my $ShortUsage = "API Tracker $TOOL_VERSION
 A tool to visualize API changes timeline of a Java library
-Copyright (C) 2017 Andrey Ponomarenko's ABI Laboratory
-License: GPLv2.0+ or LGPLv2.1+
+Copyright (C) 2018 Andrey Ponomarenko's ABI Laboratory
+License: LGPLv2.1+
 
 Usage: $CmdName [options] [profile]
 Example:
@@ -782,12 +784,19 @@ sub simpleGraph($$$)
     
     if($Delta<20)
     {
-        $MinRange -= 5;
+        if($MinRange>5) {
+            $MinRange -= 5;
+        }
+        elsif($MinRange>0) {
+            $MinRange -= 1;
+        }
         $MaxRange += 5;
     }
     else
     {
-        $MinRange -= int($Delta/20);
+        if($MinRange>int($Delta/20)) {
+            $MinRange -= int($Delta/20);
+        }
         $MaxRange += int($Delta/20);
     }
     
@@ -828,6 +837,9 @@ sub findArchives($)
     my $Dir = $_[0];
     
     my @Files = findFiles($Dir, "f", ".*\\.jar");
+    my @Modules = findFiles($Dir, "f", ".*\\.jmod");
+    
+    push(@Files, @Modules);
     
     return @Files;
 }
@@ -910,8 +922,7 @@ sub updateRequired($)
     }
     else
     {
-        if(defined $Profile->{"SnapshotVer"}
-        and $V eq $Profile->{"SnapshotVer"})
+        if(isSnapshot($V, $Profile))
         {
             if(defined $DB->{"SnapshotUpdateTime"})
             {
@@ -935,8 +946,11 @@ sub updateRequired($)
 
 sub getSnapshotUpdateTime()
 {
-    if(my $SnapshotVer = $Profile->{"SnapshotVer"}) {
-        return getTimeF($Profile->{"Versions"}{$SnapshotVer}{"Source"});
+    if(my $SnapshotVer = $Profile->{"SnapshotVer"})
+    {
+        if(defined $Profile->{"Versions"}{$SnapshotVer}) {
+            return getTimeF($Profile->{"Versions"}{$SnapshotVer}{"Source"});
+        }
     }
     
     return undef;
@@ -1327,7 +1341,7 @@ sub listPackage($)
     if($Path=~/\.(tar\.\w+|tgz|tbz2)\Z/i) {
         $Cmd = "tar -tvf \"$Path\"";
     }
-    elsif($Path=~/\.(zip|jar|aar)\Z/i) {
+    elsif($Path=~/\.(zip|jar|aar|jmod)\Z/i) {
         $Cmd = "unzip -l $Path";
     }
     
@@ -1572,7 +1586,7 @@ sub getArchiveName($$)
     my $Name = getFilename($Ar);
     my $Dir = getDirname($Ar);
     
-    $Name=~s/\.jar\Z//g;
+    $Name=~s/\.(jar|aar|jmod)\Z//g;
     
     if(my $Suffix = $Profile->{"ArchiveSuffix"}) {
         $Name=~s/\Q$Suffix\E\Z//g;
@@ -1925,7 +1939,7 @@ sub createAPIReport($$)
             $Name=~s/\A\Q$MPrefix\E\///;
         }
         
-        $Name=~s/\A(share|dist|jars)\///;
+        $Name=~s/\A(share|dist|jars|jmods)\///;
         $Name=~s/\Alib(64|32|)\///;
         
         if($Profile->{"ReportStyle"} eq "ShortArchive") {
@@ -1968,7 +1982,7 @@ sub createAPIReport($$)
             $Name=~s/\A\Q$MPrefix\E\///;
         }
         
-        $Name=~s/\A(share|dist|jars)\///;
+        $Name=~s/\A(share|dist|jars|jmods)\///;
         $Name=~s/\Alib(64|32|)\///;
         
         if($Profile->{"ReportStyle"} eq "ShortArchive") {
@@ -2493,6 +2507,14 @@ sub getJAPICC_Options($)
         push(@Opts, "-skip-classes \"$SkipClasses\"");
     }
     
+    if(my $NonImpl = $Profile->{"NonImpl"}) {
+        push(@Opts, "-non-impl \"$NonImpl\"");
+    }
+    
+    if($Profile->{"NonImplAll"} eq "On") {
+        push(@Opts, "-non-impl-all");
+    }
+    
     if(my $SkipInternalPackages = $Profile->{"SkipInternalPackages"}) {
         push(@Opts, "-skip-internal-packages \"$SkipInternalPackages\"");
     }
@@ -2529,6 +2551,10 @@ sub getDump_Options()
     
     if($Profile->{"KeepInternal"} eq "On") {
         push(@Opts, "--keep-internal");
+    }
+    
+    if(my $JdkPath = $Profile->{"JdkPath"}) {
+        push(@Opts, "-jdk-path", $JdkPath);
     }
     
     return join(" ", @Opts);
@@ -2877,9 +2903,17 @@ sub createTimeline()
             $Anchor = "v".$Anchor;
         }
         
+        my $SV = $V;
+        if(isSnapshot($V, $Profile))
+        {
+            if(my $SnapVer = getSnapshotVer($V, $Profile)) {
+                $SV .= "<br/>(".$SnapVer.")";
+            }
+        }
+        
         $Content .= "<tr id='".$Anchor."'>";
         
-        $Content .= "<td title='".getFilename($Profile->{"Versions"}{$V}{"Source"})."'>".$V."</td>\n";
+        $Content .= "<td title='".getFilename($Profile->{"Versions"}{$V}{"Source"})."'>".$SV."</td>\n";
         
         if($ShowDate ne "Off") {
             $Content .= "<td>".showDate($V, $Date)."</td>\n";
@@ -2916,11 +2950,11 @@ sub createTimeline()
                 my @Note = ();
                 
                 if($ArchivesAdded) {
-                    push(@Note, "<span class='added'>added $ArchivesAdded archive".getS($ArchivesAdded)."</span>");
+                    push(@Note, "<span class='added'>added $ArchivesAdded module".getS($ArchivesAdded)."</span>");
                 }
                 
                 if($ArchivesRemoved) {
-                    push(@Note, "<span class='incompatible'>removed $ArchivesRemoved archive".getS($ArchivesRemoved)."</span>");
+                    push(@Note, "<span class='incompatible'>removed $ArchivesRemoved module".getS($ArchivesRemoved)."</span>");
                 }
                 
                 my $CClass = "ok";
@@ -3057,7 +3091,7 @@ sub createTimeline()
             $Content .= "<tr><td class='comment' colspan=\'$Cols\'>NOTE: $Comment</td></tr>\n";
         }
         
-        if($In::Opt{"GenRss"} and defined $APIReport and $V ne "current")
+        if($In::Opt{"GenRss"} and defined $APIReport and $V ne "current" and not isSnapshot($V, $Profile))
         {
             my @RssSum = ("Binary compatibility: ".$APIReport->{"BC"}."%");
             if(my $TotalProblems = $APIReport->{"TotalProblems"})
@@ -3070,10 +3104,10 @@ sub createTimeline()
                 }
             }
             if(my $ArchivesAdded = $APIReport->{"ArchivesAdded"}) {
-                push(@RssSum, "added $ArchivesAdded archive".getS($ArchivesAdded));
+                push(@RssSum, "added $ArchivesAdded module".getS($ArchivesAdded));
             }
             if(my $ArchivesRemoved = $APIReport->{"ArchivesRemoved"}) {
-                push(@RssSum, "removed $ArchivesRemoved archive".getS($ArchivesRemoved));
+                push(@RssSum, "removed $ArchivesRemoved module".getS($ArchivesRemoved));
             }
             if(my $Added = $APIReport->{"Added"}) {
                 push(@RssSum, "added $Added method".getS($Added));
@@ -3422,10 +3456,14 @@ sub createGlobalIndex()
         }
         else
         {
-            my $DB = eval(readFile("db/$L/$DB_NAME"));
-            
-            if(defined $DB->{"Title"}) {
-                $Title = $DB->{"Title"};
+            my $DB_P = "db/$L/$DB_NAME";
+            if(-f $DB_P)
+            {
+                my $DB = eval(readFile($DB_P));
+                
+                if(defined $DB->{"Title"}) {
+                    $Title = $DB->{"Title"};
+                }
             }
         }
         
@@ -3437,9 +3475,10 @@ sub createGlobalIndex()
     
     foreach my $L (sort {lc($LibAttr{$a}{"Title"}) cmp lc($LibAttr{$b}{"Title"})} @Libs)
     {
-        $Content .= "<tr>\n";
+        my $LUrl = "timeline/$L/index.html";
+        $Content .= "<tr onclick=\"document.location=\'$LUrl\'\">\n";
         $Content .= "<td>".$LibAttr{$L}{"Title"}."</td>\n";
-        $Content .= "<td><a href='timeline/$L/index.html'>review</a></td>\n";
+        $Content .= "<td><a href=\'$LUrl\'>review</a></td>\n";
         
         # my $M = $LibAttr{$L}{"Maintainer"};
         # if(my $MUrl = $LibAttr{$L}{"MaintainerUrl"}) {
