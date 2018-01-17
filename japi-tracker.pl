@@ -141,7 +141,7 @@ DESCRIPTION:
   newer library versions.
 
   This tool is free software: you can redistribute it and/or
-  modify it under the terms of the GPLv2.0+ or LGPLv2.1+.
+  modify it under the terms of the GNU LGPL.
 
 USAGE:
   $CmdName [options] [profile]
