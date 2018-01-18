@@ -58,7 +58,7 @@ loadModule("Input");
 loadModule("Utils");
 
 my $JAPICC = "japi-compliance-checker";
-my $JAPICC_VERSION = "2.3";
+my $JAPICC_VERSION = "2.4";
 
 my $PKGDIFF = "pkgdiff";
 my $PKGDIFF_VERSION = "1.6.4";
