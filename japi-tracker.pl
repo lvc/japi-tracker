@@ -454,11 +454,11 @@ sub cleanUnused()
         }
     }
     
-    foreach my $V (keys(%{$DB->{"APIDump"}}))
+    foreach my $V (sort keys(%{$DB->{"APIDump"}}))
     {
         if(not defined $PoinVer{$V})
         {
-            printMsg("INFO", "Unused API dump v.$V");
+            printMsg("INFO", "Unused API dump v$V");
             
             if(defined $In::Opt{"Force"}) {
                 rmtree("api_dump/$TARGET_LIB/$V");
@@ -466,9 +466,9 @@ sub cleanUnused()
         }
     }
     
-    foreach my $O_V (keys(%{$DB->{"APIReport"}}))
+    foreach my $O_V (sort keys(%{$DB->{"APIReport"}}))
     {
-        foreach my $V (keys(%{$DB->{"APIReport"}{$O_V}}))
+        foreach my $V (sort keys(%{$DB->{"APIReport"}{$O_V}}))
         {
             if(not defined $SeqVer{$O_V}{$V})
             {
