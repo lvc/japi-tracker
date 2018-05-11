@@ -107,11 +107,11 @@ GetOptions("h|help!" => \$In::Opt{"Help"},
   "t|target=s" => \$In::Opt{"TargetElement"},
   "clear!" => \$In::Opt{"Clear"},
   "clean-unused!" => \$In::Opt{"CleanUnused"},
-  "force!" => \$In::Opt{"Force"},
+  "confirm|force!" => \$In::Opt{"Confirm"},
   "global-index!" => \$In::Opt{"GlobalIndex"},
   "disable-cache!" => \$In::Opt{"DisableCache"},
   "deploy=s" => \$In::Opt{"Deploy"},
-  "debug" => \$In::Opt{"Debug"},
+  "debug!" => \$In::Opt{"Debug"},
 # other options
   "json-report=s" => \$In::Opt{"JsonReport"},
   "regen-dump!" => \$In::Opt{"RegenDump"},
@@ -460,7 +460,7 @@ sub cleanUnused()
         {
             printMsg("INFO", "Unused API dump v$V");
             
-            if(defined $In::Opt{"Force"}) {
+            if(defined $In::Opt{"Confirm"}) {
                 rmtree("api_dump/$TARGET_LIB/$V");
             }
         }
@@ -473,17 +473,28 @@ sub cleanUnused()
             if(not defined $SeqVer{$O_V}{$V})
             {
                 printMsg("INFO", "Unused API report from $O_V to $V");
-                if(defined $In::Opt{"Force"})
+                if(defined $In::Opt{"Confirm"})
                 {
-                    rmtree("archives_report/$TARGET_LIB/$O_V/$V");
-                    rmtree("compat_report/$TARGET_LIB/$O_V/$V");
+                    my $ArchiveDir = "archives_report/$TARGET_LIB/$O_V";
+                    my $ReportDir = "compat_report/$TARGET_LIB/$O_V";
+                    
+                    rmtree($ArchiveDir."/".$V);
+                    rmtree($ReportDir."/".$V);
+                    
+                    if(not listDir($ArchiveDir)) {
+                        rmtree($ArchiveDir);
+                    }
+                    
+                    if(not listDir($ReportDir)) {
+                        rmtree($ReportDir);
+                    }
                 }
             }
         }
     }
     
-    if(not defined $In::Opt{"Force"}) {
-        printMsg("INFO", "Use -force option to remove unused data");
+    if(not defined $In::Opt{"Confirm"}) {
+        printMsg("INFO", "Retry with -confirm option to remove files");
     }
 }
 
