@@ -3,7 +3,7 @@
 # Java API Tracker 1.3
 # A tool to visualize API changes timeline of a Java library
 #
-# Copyright (C) 2015-2018 Andrey Ponomarenko's ABI Laboratory
+# Copyright (C) 2015-2019 Andrey Ponomarenko's ABI Laboratory
 #
 # Written by Andrey Ponomarenko
 #
@@ -83,7 +83,7 @@ my $HomePage = "https://abi-laboratory.pro/";
 
 my $ShortUsage = "API Tracker $TOOL_VERSION
 A tool to visualize API changes timeline of a Java library
-Copyright (C) 2018 Andrey Ponomarenko's ABI Laboratory
+Copyright (C) 2019 Andrey Ponomarenko's ABI Laboratory
 License: LGPLv2.1+
 
 Usage: $CmdName [options] [profile]
@@ -377,6 +377,10 @@ sub readProfile($)
         }
     }
     
+    if(not $Res{"HideEmpty"}) {
+        $Res{"HideEmpty"} = "On";
+    }
+    
     return \%Res;
 }
 
@@ -593,6 +597,8 @@ sub buildData()
             }
             
             compressAPIDump($V);
+            compressAPIReport_D($V);
+            compressAPIReport($V);
         }
     }
     
@@ -657,8 +663,7 @@ sub buildData()
         $DB->{"SnapshotUpdateTime"} = $SnapshotUpdateTime;
     }
     
-    if(defined $In::Opt{"TargetElement"}
-    and $In::Opt{"TargetElement"} eq "graph")
+    if(checkTarget("graph"))
     {
         printMsg("INFO", "Creating graph: API symbols/versions");
         
@@ -724,6 +729,22 @@ sub simpleGraph($$$)
     
     my $Few = (defined $Profile->{"GraphFewXTics"} and $Profile->{"GraphFewXTics"} eq "On");
     
+    if(not defined $Profile->{"GraphShortXTics"} or $Profile->{"GraphShortXTics"} eq "Off")
+    {
+        if(($Vs[0]=~/_/ and length($Vs[0])>=5) or length($Vs[0])>=7) {
+            $Few = 1;
+        }
+        elsif(($Vs[$#Vs]=~/_/ and length($Vs[$#Vs])>=5) or length($Vs[$#Vs])>=7) {
+            $Few = 1;
+        }
+    }
+    
+    my $P0 = 0;
+    my $P1 = int($#Vs/4);
+    my $P2 = int($#Vs/2);
+    my $P3 = int(3*$#Vs/4);
+    my $P4 = $#Vs;
+    
     my $Tics = 5;
     if(defined $Profile->{"GraphXTics"}) {
         $Tics = $Profile->{"GraphXTics"};
@@ -774,15 +795,19 @@ sub simpleGraph($$$)
         
         $V_S=~s/\-(alpha|beta|rc|a|b)[\d\.\-]*\Z//g;
         
+        if($V_S eq "SNAPSHOT") {
+            $V_S = "snapshot";
+        }
+        
         $Content .= $_."  ".$Val;
         
-        if($_==0 or $_==$#Vs
-        or $_==int($#Vs/2))
+        if($_==$P0 or $_==$P4
+        or $_==$P2)
         {
             $Content .= "  ".$V_S;
         }
-        elsif($Tics==5 and ($_==int($#Vs/4)
-        or $_==int(3*$#Vs/4)))
+        elsif($Tics==5 and ($_==$P1
+        or $_==$P3))
         {
             $Content .= "  ".$V_S;
         }
@@ -811,6 +836,62 @@ sub simpleGraph($$$)
         $MaxRange += int($Delta/20);
     }
     
+    my $LegendDefault = undef;
+    
+    $Val_Pre = $StartVal;
+    my %Top = ();
+    
+    foreach my $X (0 .. $#Vs)
+    {
+        my $V = $Vs[$X];
+        my $Val = $Val_Pre + $Scatter->{$V};
+        
+        if(grep {$X eq $_} ($P0, $P1, $P2, $P3, $P4)) {
+            $Top{$X} = ($Val - $MinRange)/($MaxRange - $MinRange);
+        }
+        $Val_Pre = $Val;
+    }
+    
+    if($Top{$P0}<0.7 and $Top{$P1}<0.7 and $Top{$P2}<0.7) {
+        $LegendDefault = "LeftTop";
+    }
+    elsif($Top{$P2}<0.7 and $Top{$P3}<0.7 and $Top{$P4}<0.7) {
+        $LegendDefault = "RightTop";
+    }
+    elsif($Top{$P2}>=0.35 and $Top{$P3}>=0.35 and $Top{$P4}>=0.35) {
+        $LegendDefault = "RightBottom";
+    }
+    elsif($Top{$P0}>=0.35 and $Top{$P1}>=0.35 and $Top{$P2}>=0.35) {
+        $LegendDefault = "LeftBottom";
+    }
+    elsif($Top{$P1}<0.7 and $Top{$P2}<0.7 and $Top{$P3}<0.7) {
+        $LegendDefault = "CenterTop";
+    }
+    elsif($Top{$P1}>=0.35 and $Top{$P2}>=0.35 and $Top{$P3}>=0.35) {
+        $LegendDefault = "CenterBottom";
+    }
+    elsif($Top{$P0}<0.72 and $Top{$P1}<0.72) {
+        $LegendDefault = "LeftTop";
+    }
+    elsif($Top{$P3}<0.72 and $Top{$P4}<0.72) {
+        $LegendDefault = "RightTop";
+    }
+    elsif($Top{$P3}>=0.33 and $Top{$P4}>=0.33) {
+        $LegendDefault = "RightBottom";
+    }
+    elsif($Top{$P0}>=0.35 and $Top{$P1}>=0.35) {
+        $LegendDefault = "LeftBottom";
+    }
+    elsif($Top{$P2}<0.72) {
+        $LegendDefault = "CenterTop";
+    }
+    elsif($Top{$P2}>=0.33) {
+        $LegendDefault = "CenterBottom";
+    }
+    else {
+        $LegendDefault = "LeftTop";
+    }
+    
     my $Data = $TMP_DIR."/graph.data";
     
     writeFile($Data, $Content);
@@ -824,20 +905,52 @@ sub simpleGraph($$$)
     $Title=~s/\'/''/g;
     
     my $Cmd = "gnuplot -e \"set title \'$GraphTitle\';";
-    $Cmd .= "set xlabel '".$Title." version';";
-    $Cmd .= "set ylabel 'API symbols';";
+    
+    my ($Left, $Center, $Right, $Top, $Bottom) = (0.54, 0.8, 0.95, 0.9, 0.3);
+    
+    if($MaxRange>=10000) {
+        $Left = 0.61;
+    }
+    elsif($MaxRange>=1000) {
+        $Left = 0.58;
+    }
+    elsif($MaxRange>=100) {
+        $Left = 0.55;
+    }
+    
+    if(not $Profile->{"GraphLegendPos"}) {
+        $Profile->{"GraphLegendPos"} = $LegendDefault;
+    }
+    
+    if($Profile->{"GraphLegendPos"} eq "RightTop") {
+        $Cmd .= "set key at graph $Right,$Top;";
+    }
+    elsif($Profile->{"GraphLegendPos"} eq "CenterTop") {
+        $Cmd .= "set key at graph $Center,$Top;";
+    }
+    elsif($Profile->{"GraphLegendPos"} eq "RightBottom") {
+        $Cmd .= "set key at graph $Right,$Bottom;";
+    }
+    elsif($Profile->{"GraphLegendPos"} eq "CenterBottom") {
+        $Cmd .= "set key at graph $Center,$Bottom;";
+    }
+    elsif($Profile->{"GraphLegendPos"} eq "LeftBottom") {
+        $Cmd .= "set key at graph $Left,$Bottom;";
+    }
+    elsif($Profile->{"GraphLegendPos"} eq "LeftTop") {
+        $Cmd .= "set key at graph $Left,$Top;";
+    }
+    
+    $Cmd .= "set key font 'FreeSans, 11';";
     $Cmd .= "set xrange [0:".$#Vs."];";
     $Cmd .= "set yrange [$MinRange:$MaxRange];";
-    $Cmd .= "set terminal svg size 380,300;";
+    $Cmd .= "set terminal svg size 325,250;";
     $Cmd .= "set output \'$GraphPath\';";
-    $Cmd .= "set nokey;";
-    $Cmd .= "set xtics font 'Times, 12';";
-    $Cmd .= "set ytics font 'Times, 12';";
-    $Cmd .= "set xlabel font 'Times, 12';";
-    $Cmd .= "set ylabel font 'Times, 12';";
+    $Cmd .= "set xtics font 'FreeSans, 13';";
+    $Cmd .= "set ytics font 'FreeSans, 13';";
     $Cmd .= "set style line 1 linecolor rgbcolor 'red' linewidth 2;";
     $Cmd .= "set style increment user;";
-    $Cmd .= "plot \'$Data\' using 2:xticlabels(3) with lines\"";
+    $Cmd .= "plot \'$Data\' using 2:xticlabels(3) title 'API\nSymbols' with lines\"";
     
     system($Cmd);
     unlink($Data);
@@ -1337,8 +1450,7 @@ sub detectDate($)
         }
     }
     
-    if(defined $Date)
-    {
+    if($Date) {
         $DB->{"Date"}{$V} = $Date;
     }
 }
@@ -1382,6 +1494,10 @@ sub compressAPIDump($)
 {
     my $V = $_[0];
     
+    if(not defined $DB->{"APIDump"}{$V}) {
+        return;
+    }
+    
     foreach my $Md5 (keys(%{$DB->{"APIDump"}{$V}}))
     {
         my $DumpPath = $DB->{"APIDump"}{$V}{$Md5}{"Path"};
@@ -1405,6 +1521,92 @@ sub compressAPIDump($)
     }
 }
 
+sub compressAPIReport_D($)
+{
+    my $V1 = $_[0];
+    
+    foreach my $V2 (keys(%{$DB->{"APIReport_D"}{$V1}}))
+    {
+        foreach my $Md5 (keys(%{$DB->{"APIReport_D"}{$V1}{$V2}}))
+        {
+            my $ReportPath = $DB->{"APIReport_D"}{$V1}{$V2}{$Md5}{"Path"};
+            
+            if($ReportPath!~/\.\Q$COMPRESS\E\Z/ and -e $ReportPath)
+            {
+                printMsg("INFO", "Compressing $ReportPath");
+                my $Dir = getDirname($ReportPath);
+                my $Name = getFilename($ReportPath);
+                my @Cmd_C = ("tar", "-C", $Dir, "-czf", $ReportPath.".".$COMPRESS, $Name);
+                system(@Cmd_C);
+                
+                if($?) {
+                    exitStatus("Error", "Can't compress API report");
+                }
+                else
+                {
+                    unlink($ReportPath);
+                    
+                    $DB->{"APIReport_D"}{$V1}{$V2}{$Md5}{"Path"} = $ReportPath.".".$COMPRESS;
+                    $DB->{"APIReport_D"}{$V1}{$V2}{$Md5}{"WWWPath"} = $ReportPath;
+                }
+            }
+            
+            my $SrcReportPath = $DB->{"APIReport_D"}{$V1}{$V2}{$Md5}{"Source_ReportPath"};
+            
+            if($SrcReportPath!~/\.\Q$COMPRESS\E\Z/ and -e $SrcReportPath)
+            {
+                printMsg("INFO", "Compressing $SrcReportPath");
+                my $Dir = getDirname($SrcReportPath);
+                my $Name = getFilename($SrcReportPath);
+                my @Cmd_C = ("tar", "-C", $Dir, "-czf", $SrcReportPath.".".$COMPRESS, $Name);
+                system(@Cmd_C);
+                
+                if($?) {
+                    exitStatus("Error", "Can't compress API report");
+                }
+                else
+                {
+                    unlink($SrcReportPath);
+                    
+                    $DB->{"APIReport_D"}{$V1}{$V2}{$Md5}{"Source_ReportPath"} = $SrcReportPath.".".$COMPRESS;
+                    $DB->{"APIReport_D"}{$V1}{$V2}{$Md5}{"WWWSource_ReportPath"} = $SrcReportPath;
+                }
+            }
+        }
+    }
+}
+
+sub compressAPIReport($)
+{
+    my $V1 = $_[0];
+    
+    foreach my $V2 (keys(%{$DB->{"APIReport"}{$V1}}))
+    {
+        my $ReportPath = $DB->{"APIReport"}{$V1}{$V2}{"Path"};
+        
+        if($ReportPath=~/\.\Q$COMPRESS\E\Z/ or not -e $ReportPath) {
+            next;
+        }
+        
+        printMsg("INFO", "Compressing $ReportPath");
+        my $Dir = getDirname($ReportPath);
+        my $Name = getFilename($ReportPath);
+        my @Cmd_C = ("tar", "-C", $Dir, "-czf", $ReportPath.".".$COMPRESS, $Name);
+        system(@Cmd_C);
+        
+        if($?) {
+            exitStatus("Error", "Can't compress API archives report");
+        }
+        else
+        {
+            unlink($ReportPath);
+            
+            $DB->{"APIReport"}{$V1}{$V2}{"Path"} = $ReportPath.".".$COMPRESS;
+            $DB->{"APIReport"}{$V1}{$V2}{"WWWPath"} = $ReportPath;
+        }
+    }
+}
+
 sub createAPIDump($)
 {
     my $V = $_[0];
@@ -1414,12 +1616,10 @@ sub createAPIDump($)
         if(defined $DB->{"APIDump"}{$V})
         {
             if(not updateRequired($V)) {
-                return 0;
+                return 1;
             }
         }
     }
-    
-    delete($DB->{"APIDump"}{$V}); # empty cache
     
     printMsg("INFO", "Creating API dump for $V");
     
@@ -1440,8 +1640,10 @@ sub createAPIDump($)
     if(not @Archives)
     {
         printMsg("ERROR", "can't find archives");
-        return;
+        return 0;
     }
+    
+    delete($DB->{"APIDump"}{$V});
     
     foreach my $Ar (sort {lc($a) cmp lc($b)} @Archives)
     {
@@ -1512,13 +1714,15 @@ sub createAPIDump($)
     }
     
     $DoneDump{$V} = 1;
+    
+    return 1;
 }
 
 sub countSymbolsF($$)
 {
     my ($Dump, $V) = @_;
     
-    if(defined $Dump->{"TotalSymbolsFiltered"})
+    if(defined $Dump->{"TotalSymbolsFiltered"} and $Dump->{"TotalSymbolsFiltered"})
     {
         if(not defined $In::Opt{"DisableCache"}) {
             return $Dump->{"TotalSymbolsFiltered"};
@@ -1640,8 +1844,6 @@ sub createAPIReport($$)
         }
     }
     
-    delete($DB->{"APIReport"}{$V1}{$V2}); # empty cache
-    
     printMsg("INFO", "Creating archives API report between $V1 and $V2");
     
     my $Cols = 6;
@@ -1689,11 +1891,22 @@ sub createAPIReport($$)
         delete($DB->{"APIDump"}{$V2});
     }
     
-    if(not defined $DB->{"APIDump"}{$V1}) {
-        createAPIDump($V1);
+    if(not defined $DB->{"APIDump"}{$V1})
+    {
+        if(not createAPIDump($V1))
+        {
+            printMsg("ERROR", "Failed to generate API dump for $V1");
+            return 0;
+        }
     }
-    if(not defined $DB->{"APIDump"}{$V2}) {
-        createAPIDump($V2);
+    
+    if(not defined $DB->{"APIDump"}{$V2})
+    {
+        if(not createAPIDump($V2))
+        {
+            printMsg("ERROR", "Failed to generate API dump for $V2");
+            return 0;
+        }
     }
     
     my $D1 = $DB->{"APIDump"}{$V1};
@@ -1727,6 +1940,8 @@ sub createAPIReport($$)
         
         $ArchiveDump{2}{$Ar} = $D2->{$Md5};
     }
+    
+    delete($DB->{"APIReport"}{$V1}{$V2});
     
     @Archives1 = sort {lc($a) cmp lc($b)} @Archives1;
     @Archives2 = sort {lc($a) cmp lc($b)} @Archives2;
@@ -1907,6 +2122,7 @@ sub createAPIReport($$)
     $Report .= "<br/>\n";
     $Report .= "<br/>\n";
     
+    $Report .= "<!-- content -->\n";
     $Report .= "<table class='summary'>\n";
     $Report .= "<tr>";
     $Report .= "<th rowspan='2'>Archive</th>\n";
@@ -2064,7 +2280,7 @@ sub createAPIReport($$)
                         $Report .= formatNum($BC_D)."%";
                     }
                     else {
-                        $Report .= "<a href='../../../../".$APIReport_D->{"Path"}."'>".formatNum($BC_D)."%</a>";
+                        $Report .= "<a href='../../../../".$APIReport_D->{"WWWPath"}."'>".formatNum($BC_D)."%</a>";
                     }
                     $Report .= "</td>\n";
                     
@@ -2093,20 +2309,20 @@ sub createAPIReport($$)
                         $Report .= formatNum($BC_D_Source)."%";
                     }
                     else {
-                        $Report .= "<a href='../../../../".$APIReport_D->{"Source_ReportPath"}."'>".formatNum($BC_D_Source)."%</a>";
+                        $Report .= "<a href='../../../../".$APIReport_D->{"WWWSource_ReportPath"}."'>".formatNum($BC_D_Source)."%</a>";
                     }
                     $Report .= "</td>\n";
                 }
                 
                 if($AddedSymbols) {
-                    $Report .= "<td class='added'><a$LinkClass href='../../../../".$APIReport_D->{"Path"}."#Added'>".$AddedSymbols.$LinkNew."</a></td>\n";
+                    $Report .= "<td class='added'><a$LinkClass href='../../../../".$APIReport_D->{"WWWPath"}."#Added'>".$AddedSymbols.$LinkNew."</a></td>\n";
                 }
                 else {
                     $Report .= "<td class='ok'>0</td>\n";
                 }
                 
                 if($RemovedSymbols) {
-                    $Report .= "<td class='removed'><a$LinkClass href='../../../../".$APIReport_D->{"Path"}."#Removed'>".$RemovedSymbols.$LinkRemoved."</a></td>\n";
+                    $Report .= "<td class='removed'><a$LinkClass href='../../../../".$APIReport_D->{"WWWPath"}."#Removed'>".$RemovedSymbols.$LinkRemoved."</a></td>\n";
                 }
                 else {
                     $Report .= "<td class='ok'>0</td>\n";
@@ -2115,14 +2331,14 @@ sub createAPIReport($$)
                 if($Profile->{"ShowTotalProblems"} eq "On")
                 {
                     if($TotalProblems) {
-                        $Report .= "<td class=\'warning\'><a$LinkClass href='../../../../".$APIReport_D->{"Path"}."'>$TotalProblems</a></td>\n";
+                        $Report .= "<td class=\'warning\'><a$LinkClass href='../../../../".$APIReport_D->{"WWWPath"}."'>$TotalProblems</a></td>\n";
                     }
                     else {
                         $Report .= "<td class='ok'>0</td>\n";
                     }
                     
                     if($TotalProblems_Source) {
-                        $Report .= "<td class=\'warning\'><a$LinkClass href='../../../../".$APIReport_D->{"Source_ReportPath"}."'>$TotalProblems_Source</a></td>\n";
+                        $Report .= "<td class=\'warning\'><a$LinkClass href='../../../../".$APIReport_D->{"WWWSource_ReportPath"}."'>$TotalProblems_Source</a></td>\n";
                     }
                     else {
                         $Report .= "<td class='ok'>0</td>\n";
@@ -2159,6 +2375,7 @@ sub createAPIReport($$)
         }
     }
     $Report .= "</table>\n";
+    $Report .= "<!-- content end -->\n";
     
     if(not $Analyzed)
     {
@@ -2237,6 +2454,7 @@ sub createAPIReport($$)
     $BC_Source = formatNum($BC_Source);
     
     $DB->{"APIReport"}{$V1}{$V2}{"Path"} = $Output;
+    $DB->{"APIReport"}{$V1}{$V2}{"WWWPath"} = $Output;
     $DB->{"APIReport"}{$V1}{$V2}{"BC"} = $BC;
     $DB->{"APIReport"}{$V1}{$V2}{"Added"} = $AddedSymbols_T;
     $DB->{"APIReport"}{$V1}{$V2}{"Removed"} = $RemovedSymbols_T;
@@ -2325,8 +2543,6 @@ sub compareAPIs($$$$)
         }
     }
     
-    delete($DB->{"APIReport_D"}{$V1}{$V2}{$Md5}); # empty cache
-    
     printMsg("INFO", "Creating JAPICC report for $Ar1 ($V1) and $Ar2 ($V2)");
     
     my $TmpDir = $TMP_DIR."/apicc/";
@@ -2335,8 +2551,19 @@ sub compareAPIs($$$$)
     my $Dump1 = $DB->{"APIDump"}{$V1}{getMd5($Ar1)};
     my $Dump2 = $DB->{"APIDump"}{$V2}{getMd5($Ar2)};
     
-    my $Dump1_Meta = readProfile(readFile(getDirname($Dump1->{"Path"})."/meta.json"));
-    my $Dump2_Meta = readProfile(readFile(getDirname($Dump2->{"Path"})."/meta.json"));
+    if(not -e $Dump1->{"Path"})
+    {
+        printMsg("ERROR", "failed to find \'".$Dump1->{"Path"}."\'");
+        return 1;
+    }
+    
+    if(not -e $Dump2->{"Path"})
+    {
+        printMsg("ERROR", "failed to find \'".$Dump2->{"Path"}."\'");
+        return 1;
+    }
+    
+    delete($DB->{"APIReport_D"}{$V1}{$V2}{$Md5});
     
     my $Dir = "compat_report/$TARGET_LIB/$V1/$V2/$Md5";
     my $BinReport = $Dir."/bin_compat_report.html";
@@ -2470,10 +2697,12 @@ sub compareAPIs($$$$)
     $Meta{"Removed"} = $Removed;
     $Meta{"TotalProblems"} = $Total;
     $Meta{"Path"} = $BinReport;
+    $Meta{"WWWPath"} = $BinReport;
     
     $Meta{"Source_Affected"} = $Affected_Source;
     $Meta{"Source_TotalProblems"} = $Total_Source;
     $Meta{"Source_ReportPath"} = $SrcReport;
+    $Meta{"WWWSource_ReportPath"} = $SrcReport;
     
     $Meta{"Archive1"} = $Ar1;
     $Meta{"Archive2"} = $Ar2;
@@ -2587,12 +2816,20 @@ sub createPkgdiff($$)
         }
     }
     
-    delete($DB->{"PackageDiff"}{$V1}{$V2}); # empty cache
-    
     printMsg("INFO", "Creating package diff for $V1 and $V2");
     
     my $Source1 = $Profile->{"Versions"}{$V1}{"Source"};
     my $Source2 = $Profile->{"Versions"}{$V2}{"Source"};
+    
+    if(not -e $Source1) {
+        return 1;
+    }
+    
+    if(not -e $Source2) {
+        return 1;
+    }
+    
+    delete($DB->{"PackageDiff"}{$V1}{$V2});
     
     my $Dir = "package_diff/$TARGET_LIB/$V1/$V2";
     my $Output = $Dir."/report.html";
@@ -2822,17 +3059,71 @@ sub createTimeline()
     }
     
     $Content .= "<h1>".$ContentHeader."</h1>\n";
-    $Content .= "<br/>";
-    $Content .= "<br/>";
     
     my $GraphPath = "graph/$TARGET_LIB/graph.svg";
     my $ShowGraph = (-f $GraphPath);
-    my $ShowSponsor = (defined $In::Opt{"Sponsors"});
+    my $ShowSponsor = (defined $In::Opt{"Sponsors"} and defined $LibrarySponsor{$TARGET_LIB});
     
-    my $RightSide = ($ShowGraph or $ShowSponsor);
+    $Content .= "<!-- content -->\n";
     
-    if($RightSide) {
-        $Content .= "<table cellpadding='0' cellspacing='0'><tr><td valign='top'>\n";
+    if($ShowGraph or $ShowSponsor)
+    {
+        if($ShowSponsor)
+        {
+            #if(not defined $LibrarySponsor{$TARGET_LIB})
+            #{
+            #    $Content .= "<div class='become_sponsor'>\n";
+            #    $Content .= "Become a <a href='https://abi-laboratory.pro/index.php?view=sponsor-java'>sponsor</a><br/>of this report";
+            #    $Content .= "</div>\n";
+            #}
+        }
+        
+        if($ShowGraph)
+        {
+            $Content .= "<p>\n";
+            $Content .= "<img src=\'../../$GraphPath?v=1.1\' alt='Timeline of API changes' />\n";
+            $Content .= "</p>\n";
+        }
+        
+        if($ShowSponsor)
+        {
+            my %Weight = (
+                "Bronze"  => 1,
+                "Silver"  => 2,
+                "Gold"    => 3,
+                "Diamond" => 4,
+                "Keystone" => 5
+            );
+            
+            my $Sponsors = $LibrarySponsor{$TARGET_LIB};
+            
+            $Content .= "<p>\n";
+            $Content .= "<div class='sponsor'>\n";
+            $Content .= "This report is<br/>supported by<p/>\n";
+            
+            foreach my $SName (sort {$Weight{$Sponsors->{$b}{"Status"}}<=>$Weight{$Sponsors->{$a}{"Status"}}} sort keys(%{$Sponsors}))
+            {
+                my $Sponsor = $Sponsors->{$SName};
+                my $Logo = $Sponsor->{"Logo"};
+                
+                $Content .= "<a href='".$Sponsor->{"Url"}."'>";
+                
+                if($Logo and -f $Logo) {
+                    $Content .= "<img src=\'../../$Logo\' alt='".$SName."' class='sponsor' />";
+                }
+                else {
+                    $Content .= $SName;
+                }
+                
+                $Content .= "</a>\n";
+            }
+            $Content .= "</div>\n";
+            $Content .= "</p>\n";
+        }
+    }
+    else
+    {
+        $Content .= "<br/>\n";
     }
     
     $Content .= "<table cellpadding='3' class='summary'>\n";
@@ -2985,7 +3276,7 @@ sub createTimeline()
                     $CClass = "warning";
                 }
                 
-                my $BC_Summary = "<a href='../../".$APIReport->{"Path"}."'>$BC%</a>";
+                my $BC_Summary = "<a href='../../".$APIReport->{"WWWPath"}."'>$BC%</a>";
                 
                 my $CClass_Source = "ok";
                 if($BC_Source ne "100")
@@ -3004,7 +3295,7 @@ sub createTimeline()
                     $CClass_Source = "warning";
                 }
                 
-                my $BC_Summary_Source = "<a href='../../".$APIReport->{"Path"}."'>$BC_Source%</a>";
+                my $BC_Summary_Source = "<a href='../../".$APIReport->{"WWWPath"}."'>$BC_Source%</a>";
                 
                 if(@Note)
                 {
@@ -3032,7 +3323,7 @@ sub createTimeline()
         if(defined $APIReport)
         {
             if(my $Added = $APIReport->{"Added"}) {
-                $Content .= "<td class='added'><a$LinkClass href='../../".$APIReport->{"Path"}."'>".$Added.$LinkNew."</a></td>\n";
+                $Content .= "<td class='added'><a$LinkClass href='../../".$APIReport->{"WWWPath"}."'>".$Added.$LinkNew."</a></td>\n";
             }
             else {
                 $Content .= "<td class='ok'>0</td>\n";
@@ -3045,7 +3336,7 @@ sub createTimeline()
         if(defined $APIReport)
         {
             if(my $Removed = $APIReport->{"Removed"}) {
-                $Content .= "<td class='removed'><a$LinkClass href='../../".$APIReport->{"Path"}."'>".$Removed.$LinkRemoved."</a></td>\n";
+                $Content .= "<td class='removed'><a$LinkClass href='../../".$APIReport->{"WWWPath"}."'>".$Removed.$LinkRemoved."</a></td>\n";
             }
             else {
                 $Content .= "<td class='ok'>0</td>\n";
@@ -3060,14 +3351,14 @@ sub createTimeline()
             if(defined $APIReport)
             {
                 if(my $TotalProblems = $APIReport->{"TotalProblems"}) {
-                    $Content .= "<td class=\'warning\'><a$LinkClass href='../../".$APIReport->{"Path"}."'>$TotalProblems</a></td>\n";
+                    $Content .= "<td class=\'warning\'><a$LinkClass href='../../".$APIReport->{"WWWPath"}."'>$TotalProblems</a></td>\n";
                 }
                 else {
                     $Content .= "<td class='ok'>0</td>\n";
                 }
                 
                 if(my $TotalProblems_Source = $APIReport->{"Source_TotalProblems"}) {
-                    $Content .= "<td class=\'warning\'><a$LinkClass href='../../".$APIReport->{"Path"}."'>$TotalProblems_Source</a></td>\n";
+                    $Content .= "<td class=\'warning\'><a$LinkClass href='../../".$APIReport->{"WWWPath"}."'>$TotalProblems_Source</a></td>\n";
                 }
                 else {
                     $Content .= "<td class='ok'>0</td>\n";
@@ -3177,75 +3468,7 @@ sub createTimeline()
     $Content .= "<br/>";
     $Content .= "<br/>";
     $Content .= "Generated by <a href='https://github.com/lvc/japi-tracker'>Java API Tracker</a> and <a href='https://github.com/lvc/japi-compliance-checker'>JAPICC</a> tools.";
-    
-    if($RightSide)
-    {
-        $Content .= "</td>";
-        $Content .= "<td width='100%' valign='top' align='left' style='padding-left:2em;'>\n";
-        
-        if($ShowSponsor)
-        {
-            if(not defined $LibrarySponsor{$TARGET_LIB})
-            {
-                $Content .= "<div class='become_sponsor'>\n";
-                $Content .= "Become a <a href='https://abi-laboratory.pro/index.php?view=sponsor-java'>sponsor</a><br/>of this report";
-                $Content .= "</div>\n";
-            }
-            
-            $Content .= "<br/>\n";
-        }
-        
-        if($ShowGraph)
-        {
-            $Content .= "<img src=\'../../$GraphPath\' alt='Timeline of API changes' />\n";
-            $Content .= "<br/>\n";
-            $Content .= "<br/>\n";
-            $Content .= "<br/>\n";
-            $Content .= "<p/>\n";
-        }
-        
-        if($ShowSponsor)
-        {
-            my %Weight = (
-                "Bronze"  => 1,
-                "Silver"  => 2,
-                "Gold"    => 3,
-                "Diamond" => 4
-            );
-            if(defined $LibrarySponsor{$TARGET_LIB})
-            {
-                my $Sponsors = $LibrarySponsor{$TARGET_LIB};
-                
-                $Content .= "<div class='sponsor'>\n";
-                $Content .= "This report is<br/>supported by<p/>\n";
-                
-                foreach my $SName (sort {$Weight{$Sponsors->{$b}{"Status"}}<=>$Weight{$Sponsors->{$a}{"Status"}}} sort keys(%{$Sponsors}))
-                {
-                    my $Sponsor = $Sponsors->{$SName};
-                    my $Logo = $Sponsor->{"Logo"};
-                    
-                    $Content .= "<a href='".$Sponsor->{"Url"}."'>";
-                    
-                    if($Logo and -f $Logo) {
-                        $Content .= "<img src=\'../../$Logo\' alt='".$SName."' class='sponsor' />";
-                    }
-                    else {
-                        $Content .= $SName;
-                    }
-                    
-                    $Content .= "</a>\n";
-                    $Content .= "<p/>\n";
-                }
-                $Content .= "</div>\n";
-            }
-            
-            $Content .= "<br/>\n";
-        }
-        
-        $Content .= "</td>\n";
-        $Content .=  "</tr>\n";
-        $Content .= "</table>\n";
-    }
+    $Content .= "<!-- content end -->\n";
     
     $Content .= getSign("Home");
     
@@ -3406,16 +3629,17 @@ sub createGlobalIndex()
     writeJs();
     writeImages();
     
-    my $Title = "API Tracker: Maintained Java libraries";
+    my $Title = "API Tracker: Tested Java libraries";
     my $Desc = "List of maintained libraries";
     my $Content = composeHTML_Head("global_index", $Title, "", $Desc, "report.css", "index.js");
     $Content .= "<body onload=\"applyFilter(document.getElementById('Filter'), 'List', 'Header', 'Note')\">\n";
     
     $Content .= getHead("global_index");
     
-    $Content .= "<h1>Maintained libraries (".($#Libs+1).")</h1>\n";
+    $Content .= "<h1>Tested libraries (".($#Libs+1).")</h1>\n";
     $Content .= "<br/>\n";
     
+    $Content .= "<!-- content -->\n";
     if($#Libs>=10)
     {
         my $E = "applyFilter(this, 'List', 'Header', 'Note')";
@@ -3487,6 +3711,9 @@ sub createGlobalIndex()
     foreach my $L (sort {lc($LibAttr{$a}{"Title"}) cmp lc($LibAttr{$b}{"Title"})} @Libs)
     {
         my $LUrl = "timeline/$L/index.html";
+        
+        $LUrl=~s/\+/\%2B/g;
+        
         $Content .= "<tr onclick=\"document.location=\'$LUrl\'\">\n";
         $Content .= "<td>".$LibAttr{$L}{"Title"}."</td>\n";
         $Content .= "<td><a href=\'$LUrl\'>review</a></td>\n";
@@ -3501,6 +3728,7 @@ sub createGlobalIndex()
     }
     
     $Content .= "</table>";
+    $Content .= "<!-- content end -->\n";
     
     $Content .= getSign("Other");
     $Content .= "</body></html>";
@@ -3615,14 +3843,20 @@ sub checkFiles()
         {
             foreach my $Md5 (listDir($APIReports_D."/".$V1."/".$V2))
             {
+                my $Dir = $APIReports_D."/".$V1."/".$V2."/".$Md5;
+                my $MetaPath = $Dir."/meta.json";
                 if(not defined $DB->{"APIReport_D"}{$V1}{$V2}{$Md5})
                 {
                     my %Info = ();
-                    my $Dir = $APIReports_D."/".$V1."/".$V2."/".$Md5;
                     
                     $Info{"Path"} = $Dir."/bin_compat_report.html";
+                    $Info{"WWWPath"} = $Info{"Path"};
                     
-                    my $Meta = readProfile(readFile($Dir."/meta.json"));
+                    if(-e $Info{"Path"}.".".$COMPRESS) {
+                        $Info{"Path"} .= ".".$COMPRESS;
+                    }
+                    
+                    my $Meta = readProfile(readFile($MetaPath));
                     $Info{"Affected"} = $Meta->{"Affected"};
                     $Info{"Added"} = $Meta->{"Added"};
                     $Info{"Removed"} = $Meta->{"Removed"};
@@ -3632,10 +3866,42 @@ sub checkFiles()
                     $Info{"Source_TotalProblems"} = $Meta->{"Source_TotalProblems"};
                     $Info{"Source_ReportPath"} = $Meta->{"Source_ReportPath"};
                     
+                    $Info{"WWWSource_ReportPath"} = $Info{"Source_ReportPath"};
+                    
+                    if(-e $Info{"Source_ReportPath"}.".".$COMPRESS) {
+                        $Info{"Source_ReportPath"} .= ".".$COMPRESS;
+                    }
+                    
                     $Info{"Archive1"} = $Meta->{"Archive1"};
                     $Info{"Archive2"} = $Meta->{"Archive2"};
                     
                     $DB->{"APIReport_D"}{$V1}{$V2}{$Md5} = \%Info;
+                }
+                else
+                {
+                    my $Info = $DB->{"APIReport_D"}{$V1}{$V2}{$Md5};
+                    if(not -e $MetaPath) {
+                        genMeta($MetaPath, $Info);
+                    }
+                    
+                    if($Profile->{"HideEmpty"})
+                    {
+                        if(not $Info->{"Added"} and not $Info->{"Removed"}
+                        and not $Info->{"TotalProblems"} and not $Info->{"Source_TotalProblems"})
+                        {
+                            if(-e $Info->{"Path"})
+                            {
+                                printMsg("INFO", "Removing ".$Info->{"Path"});
+                                unlink($Info->{"Path"});
+                            }
+                            
+                            if(-e $Info->{"Source_ReportPath"})
+                            {
+                                printMsg("INFO", "Removing ".$Info->{"Source_ReportPath"});
+                                unlink($Info->{"Source_ReportPath"});
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3646,14 +3912,21 @@ sub checkFiles()
     {
         foreach my $V2 (listDir($APIReports."/".$V1))
         {
+            my $Dir = $APIReports."/".$V1."/".$V2;
+            my $MetaPath = $Dir."/meta.json";
             if(not defined $DB->{"APIReport"}{$V1}{$V2})
             {
                 my %Info = ();
                 my $Dir = $APIReports."/".$V1."/".$V2;
                 
                 $Info{"Path"} = $Dir."/report.html";
+                $Info{"WWWPath"} = $Info{"Path"};
                 
-                my $Meta = readProfile(readFile($Dir."/meta.json"));
+                if(-e $Info{"Path"}.".".$COMPRESS) {
+                    $Info{"Path"} .= ".".$COMPRESS;
+                }
+                
+                my $Meta = readProfile(readFile($MetaPath));
                 $Info{"BC"} = $Meta->{"BC"};
                 $Info{"Added"} = $Meta->{"Added"};
                 $Info{"Removed"} = $Meta->{"Removed"};
@@ -3667,7 +3940,38 @@ sub checkFiles()
                 
                 $DB->{"APIReport"}{$V1}{$V2} = \%Info;
             }
+            else
+            {
+                if(not -e $MetaPath) {
+                    genMeta($MetaPath, $DB->{"APIReport"}{$V1}{$V2});
+                }
+            }
         }
+    }
+}
+
+sub genMeta($$)
+{
+    my ($MetaPath, $Data) = @_;
+    
+    printMsg("INFO", "Generating metadata $MetaPath");
+    
+    my @Meta = ();
+    
+    foreach my $K (sort keys(%{$Data}))
+    {
+        my $Val = $Data->{$K};
+        
+        if($Val=~/\A\d+\Z/) {
+            push(@Meta, "\"$K\": $Val");
+        }
+        else {
+            push(@Meta, "\"$K\": \"".$Val."\"");
+        }
+    }
+    
+    if(@Meta) {
+        writeFile($MetaPath, "{\n  ".join(",\n  ", @Meta)."\n}");
     }
 }
 
@@ -3795,11 +4099,16 @@ sub scenario()
         $In::Opt{"Build"} = 1;
     }
     
+    if($In::Opt{"Build"} and not $In::Opt{"TargetElement"} and not $In::Opt{"TargetVersion"})
+    {
+        $In::Opt{"GenRss"} = 1;
+    }
+    
     if($In::Opt{"TargetElement"})
     {
         if($In::Opt{"TargetElement"}!~/\A(date|dates|changelog|apidump|apireport|pkgdiff|packagediff|graph|archivesreport|compress)\Z/)
         {
-            exitStatus("Error", "the value of -target option should be one of the following: date, changelog, apidump, apireport, pkgdiff.");
+            exitStatus("Error", "the value of -target option should be one of the following: date, changelog, apidump, apireport, pkgdiff, graph, archivesreport.");
         }
     }
     
@@ -3836,7 +4145,7 @@ sub scenario()
         exitStatus("Module_Error", "cannot find \'$JAPICC\'");
     }
     
-    my @Reports = ("timeline", "package_diff", "changelog", "api_dump", "archives_report", "compat_report", "graph");
+    my @Reports = ("timeline", "package_diff", "changelog", "api_dump", "archives_report", "compat_report", "graph", "rss");
     
     if(my $Profile_Path = $ARGV[0])
     {
