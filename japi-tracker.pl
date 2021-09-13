@@ -544,7 +544,7 @@ sub buildData()
         }
         if(my $Installed = $Profile->{"Versions"}{$V}{"Installed"})
         {
-            if(not -d $Installed)
+            if(not $DB->{"APIDump"}{$V} and not -d $Installed)
             {
                 printMsg("ERROR", "$V is not installed");
             }
