@@ -3,7 +3,7 @@
 # Java API Tracker 1.3
 # A tool to visualize API changes timeline of a Java library
 #
-# Copyright (C) 2015-2019 Andrey Ponomarenko's ABI Laboratory
+# Copyright (C) 2015-2021 Andrey Ponomarenko's ABI Laboratory
 #
 # Written by Andrey Ponomarenko
 #
@@ -83,7 +83,7 @@ my $HomePage = "https://abi-laboratory.pro/";
 
 my $ShortUsage = "API Tracker $TOOL_VERSION
 A tool to visualize API changes timeline of a Java library
-Copyright (C) 2019 Andrey Ponomarenko's ABI Laboratory
+Copyright (C) 2021 Andrey Ponomarenko's ABI Laboratory
 License: LGPLv2.1+
 
 Usage: $CmdName [options] [profile]
@@ -115,6 +115,7 @@ GetOptions("h|help!" => \$In::Opt{"Help"},
 # other options
   "json-report=s" => \$In::Opt{"JsonReport"},
   "regen-dump!" => \$In::Opt{"RegenDump"},
+  "compress!" => \$In::Opt{"Compress"},
   "rss!" => \$In::Opt{"GenRss"},
 # private options
   "sponsors=s" => \$In::Opt{"Sponsors"}
@@ -205,6 +206,9 @@ OTHER OPTIONS:
   -regen-dump
       Regenerate API dumps for previous versions if
       comparing with new ones.
+  
+  -compress
+      Generate compressed reports.
   
   -rss
       Generate RSS feed.
@@ -1660,7 +1664,7 @@ sub createAPIDump($)
         
         my $APIDir = $Dir."/".$Md5;
         my $APIDump = $APIDir."/API.dump";
-        if(not $Profile->{"NoCompress"}) {
+        if($Profile->{"Compress"} or $In::Opt{"Compress"}) {
             $APIDump .= ".".$COMPRESS;
         }
         my $Name = getFilename($Ar);
