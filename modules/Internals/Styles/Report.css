@@ -1,10 +1,11 @@
 table.summary {
-    font-family:"DejaVu Sans Mono", "Monaco", monospace;
-    font-size:0.94em;
     border-collapse:collapse;
     table-layout:fixed;
 }
-
+table.summary td, table.summary th {
+    font-family:VeraMono, "DejaVu Sans Mono", "Monaco", monospace;
+    font-size:0.94em;
+}
 table.summary tr, table.summary td, table.summary th
 {
     border:1px solid #777777;
@@ -18,18 +19,11 @@ table.summary th {
     background:#f2f2f2;
     white-space:nowrap;
 }
-
 table.summary td {
     padding-top:20px;
     padding-bottom:20px;
     white-space:nowrap;
 }
-
-a.home {
-    font-size:1.2em;
-    text-decoration:none;
-}
-
 a.num:not(:hover) {
     color:#000000;
     text-decoration:none;
@@ -37,15 +31,12 @@ a.num:not(:hover) {
 a.num:hover {
     text-decoration:underline;
 }
-
 a.info {
     text-decoration:none;
 }
-
 .note {
     font-size:0.82em;
 }
-
 .ok {
     background-color:#CCFFCC;
 }
@@ -88,4 +79,8 @@ table.summary th.sc {
 .highlight tr:hover {
     background-color:#E0E0E0;
     cursor:pointer;
+}
+.rss {
+    height:1.2em;
+    vertical-align:bottom;
 }
