@@ -1119,6 +1119,12 @@ sub createChangelog($$)
         return 0;
     }
     
+    my $Dir = "changelog/$TARGET_LIB/$V";
+    
+    if(-e $Dir) {
+        rmtree($Dir);
+    }
+    
     my $TmpDir = $TMP_DIR."/log/";
     mkpath($TmpDir);
     
@@ -1190,8 +1196,6 @@ sub createChangelog($$)
             }
         }
     }
-    
-    my $Dir = "changelog/$TARGET_LIB/$V";
     
     if($ChangelogPath)
     {
@@ -1505,8 +1509,9 @@ sub compressAPIDump($)
     foreach my $Md5 (keys(%{$DB->{"APIDump"}{$V}}))
     {
         my $DumpPath = $DB->{"APIDump"}{$V}{$Md5}{"Path"};
+        $DumpPath=~s/\.\Q$COMPRESS\E\Z//;
         
-        if($DumpPath=~/\.\Q$COMPRESS\E\Z/) {
+        if(not -e $DumpPath) {
             next;
         }
         
@@ -1534,8 +1539,9 @@ sub compressAPIReport_D($)
         foreach my $Md5 (keys(%{$DB->{"APIReport_D"}{$V1}{$V2}}))
         {
             my $ReportPath = $DB->{"APIReport_D"}{$V1}{$V2}{$Md5}{"Path"};
+            $ReportPath=~s/\.\Q$COMPRESS\E\Z//;
             
-            if($ReportPath!~/\.\Q$COMPRESS\E\Z/ and -e $ReportPath)
+            if(-e $ReportPath)
             {
                 printMsg("INFO", "Compressing $ReportPath");
                 my $Dir = getDirname($ReportPath);
@@ -1556,8 +1562,9 @@ sub compressAPIReport_D($)
             }
             
             my $SrcReportPath = $DB->{"APIReport_D"}{$V1}{$V2}{$Md5}{"Source_ReportPath"};
+            $SrcReportPath=~s/\.\Q$COMPRESS\E\Z//;
             
-            if($SrcReportPath!~/\.\Q$COMPRESS\E\Z/ and -e $SrcReportPath)
+            if(-e $SrcReportPath)
             {
                 printMsg("INFO", "Compressing $SrcReportPath");
                 my $Dir = getDirname($SrcReportPath);
@@ -1587,8 +1594,9 @@ sub compressAPIReport($)
     foreach my $V2 (keys(%{$DB->{"APIReport"}{$V1}}))
     {
         my $ReportPath = $DB->{"APIReport"}{$V1}{$V2}{"Path"};
+        $ReportPath=~s/\.\Q$COMPRESS\E\Z//;
         
-        if($ReportPath=~/\.\Q$COMPRESS\E\Z/ or not -e $ReportPath) {
+        if(not -e $ReportPath) {
             next;
         }
         
@@ -2089,6 +2097,8 @@ sub createAPIReport($$)
     
     my @Archives = sort keys(%Mapped);
     
+    my $ObjectsDir = "archives_report/$TARGET_LIB/$V1/$V2";
+    
     if(not $ArchivesReport)
     {
         if($In::Opt{"Rebuild"})
@@ -2109,13 +2119,21 @@ sub createAPIReport($$)
             compareAPIs($V1, $V2, $Archive1, $Mapped{$Archive1});
         }
     }
-    
-    my $Dir = "archives_report/$TARGET_LIB/$V1/$V2";
+    else
+    {
+        if($In::Opt{"Rebuild"})
+        {
+            # Remove old objects reports
+            if(-d $ObjectsDir) {
+                rmtree($ObjectsDir);
+            }
+        }
+    }
     
     if(not defined $DB->{"APIReport_D"}{$V1}{$V2}
     and not keys(%Added) and not keys(%Removed))
     {
-        rmtree($Dir);
+        rmtree($ObjectsDir);
         return;
     }
     
@@ -2383,7 +2401,7 @@ sub createAPIReport($$)
     
     if(not $Analyzed)
     {
-        rmtree($Dir);
+        rmtree($ObjectsDir);
         return;
     }
     
@@ -2395,7 +2413,7 @@ sub createAPIReport($$)
     
     $Report = composeHTML_Head("archives_report", $Title, $Keywords, $Desc, "report.css")."\n<body>\n$Report\n</body>\n</html>\n";
     
-    my $Output = $Dir."/report.html";
+    my $Output = $ObjectsDir."/report.html";
     
     writeFile($Output, $Report);
     
@@ -2489,7 +2507,7 @@ sub createAPIReport($$)
     push(@Meta, "\"ArchivesRemovedSymbols\": ".$RemovedByArchives_T);
     push(@Meta, "\"TotalArchives\": ".($#Archives1 + 1));
     
-    writeFile($Dir."/meta.json", "{\n  ".join(",\n  ", @Meta)."\n}");
+    writeFile($ObjectsDir."/meta.json", "{\n  ".join(",\n  ", @Meta)."\n}");
 }
 
 sub getMaxPrefix(@)
@@ -2554,6 +2572,14 @@ sub compareAPIs($$$$)
     
     my $Dump1 = $DB->{"APIDump"}{$V1}{getMd5($Ar1)};
     my $Dump2 = $DB->{"APIDump"}{$V2}{getMd5($Ar2)};
+    
+    if(not -e $Dump1->{"Path"} and -e $Dump1->{"Path"}.".".$COMPRESS) {
+        $Dump1->{"Path"} = $Dump1->{"Path"}.".".$COMPRESS;
+    }
+    
+    if(not -e $Dump2->{"Path"} and -e $Dump2->{"Path"}.".".$COMPRESS) {
+        $Dump2->{"Path"} = $Dump2->{"Path"}.".".$COMPRESS;
+    }
     
     if(not -e $Dump1->{"Path"})
     {
@@ -2836,6 +2862,11 @@ sub createPkgdiff($$)
     delete($DB->{"PackageDiff"}{$V1}{$V2});
     
     my $Dir = "package_diff/$TARGET_LIB/$V1/$V2";
+    
+    if(-e $Dir) {
+        rmtree($Dir);
+    }
+    
     my $Output = $Dir."/report.html";
     rmtree($Dir);
     
